@@ -1,0 +1,1938 @@
+#try to fit a sigmoid function
+#install.packages("minpack.lm")
+library(minpack.lm)
+#install.packages("pracma")
+library(pracma)
+#use one day as test: 16 Jan
+library(scales)
+#install.packages("fuzzyjoin")
+library(fuzzyjoin)
+library(ggsignif)
+#for mixed models
+library(emmeans)
+library(lmerTest)
+library(lme4)
+#install.packages("ggbrace")
+#library(ggbrace)
+#library(multcompView)
+#install.packages("multcomp")
+#library(multcomp)
+#install.packages("lsmeans")
+#library(lsmeans)
+
+test <- subset(all_MLH, date=="2023-10-11" & ID=="AUNA")
+
+# Define factors
+sites <- unique(all_MLH$ID)
+dates <- as.character(c("2023-05-03", "2023-06-05", "2023-07-10", "2024-01-11", "2024-01-16", "2024-01-27"))
+
+dates <- as.character(c(cond_NE_few_summer$Date, cond_NE_few_winter$Date, 
+                        cond_SW_few_summer$Date, cond_SW_few_winter$Date))
+#create output dir
+res_GR <- expand.grid(Site = sites, Date = dates)
+res_GR$max_GR <- NA_real_
+res_GR$avg_GR <- NA_real_
+res_GR$MT_z_start <- NA_real_
+res_GR$MT_z_end <- NA_real_
+res_GR$MT_start <- as.POSIXct(NA, tz = "UTC")
+res_GR$MT_end <- as.POSIXct(NA, tz = "UTC")
+res_GR$t_max_GR <- as.POSIXct(NA, tz = "UTC")
+res_GR$MT_duration_h <- NA_real_
+
+all_MLH_pred <- data.frame("ID" = NA,    "time" = as.POSIXct(NA, tz = "UTC"), "MLH" = NA,  
+                           "date" = as.POSIXct(NA, tz = "UTC"), "type" = NA, 
+                           "index"= NA, "fit" =NA)
+
+i = "2023-06-04"
+x = "AUNA"
+
+####calculate for days / sites #####
+for(i in dates){
+  print(i)
+  for(x in sites){
+    print(x)
+    tryCatch({
+    #subset to date and site
+test <- subset(all_MLH, date==i & ID==x)
+#subset between sunrise and sunset
+test <- subset(test, time > as.POSIXct(paste0(i, suntimes$sunrise[suntimes$date==i], tz="UTC")) & 
+                 time < as.POSIXct(paste0(i,suntimes$sunset[suntimes$date==i], tz="UTC")))
+#define time index
+test$index <- 1:length(test$time)
+test <- test %>% filter(!is.na(MLH))
+test <- test[1:which.max(test$MLH),] #todomaybe try to the two highest points to avoid getting one spike
+
+if(i=="2024-01-27"&x=="SIRT"){
+#check for drops 
+# Define the percentage threshold for allowable drop (e.g., 10%)
+drop_threshold <- 0.05   # 5% of total growth
+# Calculate total growth
+total_growth <- max(test$MLH, na.rm = TRUE) - min(test$MLH, na.rm = TRUE)
+# Remove where MLH drops
+test <- test %>% arrange(index) %>%
+  mutate(diff = MLH - lag(MLH)) %>%
+  filter(is.na(diff) | diff > -drop_threshold * total_growth) %>%
+  select(-diff)
+}else{}
+#define starting values
+A0 <- min(test$MLH, na.rm = TRUE)
+K0 <- max(test$MLH, na.rm = TRUE)*1.05 ##2#
+# where y crosses halfway
+midY <- (A0 + K0) / 2
+# find time nearest midY
+M0 <- test$index[which.min(abs(test$MLH - midY))]
+B0 <- 0.04 #  initial slope guess 0.04
+v0 <- 1.5 # asymmetry parameter ##0.1#0.01#1.5
+
+#determine threshold for normalised derivative
+threshold_start <- 0.08 #0.08
+threshold_end  <- 0.8 
+
+#symmetrical fit <- nlsLM(MLH ~ A + (K - A) / (1 + exp(-B * (index - M))), 
+ #            start = list(A = A0, K = K0, B = B0, M = M0), 
+  #           data = test, control = nls.lm.control(maxiter = 200))
+
+#Richards curve
+fit <- try(nlsLM(MLH ~ A + (K - A)/((1 + nu * exp(-B * (index - M)))^(1/nu)),
+                      start = list(A = A0, K = K0, B = B0, M = M0, nu = v0),
+                      data = test, 
+                      control = nls.lm.control(maxiter = 500)), 
+    silent=TRUE)
+if(inherits(fit, "try-error")){
+      v0 <- 1e-06
+      fit <- nlsLM(MLH ~ A + (K - A)/((1 + nu * exp(-B * (index - M)))^(1/nu)),
+                   start = list(A = A0, K = K0, B = B0, M = M0, nu = v0),
+                   data = test, 
+                   control = nls.lm.control(maxiter = 500))
+    }else{}
+#summary(fit)
+
+test$fit <- predict(fit)
+
+png(filename=paste0(output_dir, "/MLH/GR/", datename,"_",x,"_fit_MT.png"), 
+    width = 10, height=15, units="cm", res=500)
+plot(test$index, test$MLH, ylab="MLH (m)", xlab="Time")
+lines(test$index, test$fit, col = "red", lwd = 2)
+dev.off()
+#numerical
+x_grid <- test$index
+y_fit <- test$fit
+
+# Compute numerical derivative
+dy_dx <- diff(y_fit) / diff(x_grid)
+
+#plot derivative
+png(filename=paste0(output_dir, "/MLH/GR/", datename,"_",x,"_derivative_MT.png"), 
+    width = 10, height=15, units="cm", res=500)
+plot(dy_dx ,type="l", xlab="Time")
+dev.off()
+
+#normalise dy_dx
+dy_dx_norm <- rescale(dy_dx)
+
+#plot normalised derivative
+png(filename=paste0(output_dir, "/MLH/GR/", datename,"_",x,"_norm_derivative_MT.png"), 
+    width = 10, height=15, units="cm", res=500)
+plot(dy_dx_norm ,type="l", xlab="Time")
+abline(h=0.08, col="red",)
+abline(h=0.8, col="orange")
+dev.off()
+#filter derivative to get slop of MT 
+imax <- which.max(dy_dx_norm) #find maximum
+if(imax!=1){#if the growth rate is increasing over time
+dy_dx_norm_after <- dy_dx_norm[(imax+1):length(dy_dx_norm)] #subset to after maximum
+MT_start <-  which(dy_dx_norm > threshold_start)[1]
+MT_end   <- which(dy_dx_norm_after < threshold_end)[1] + imax
+}else{#if the growth rate is decreasing over time
+  MT_start <-  1
+  MT_end   <- which(dy_dx_norm < threshold_start)[1]
+}
+#if second threshold is not reached take end (max MLH)
+if(is.na(MT_end)==TRUE){ 
+  MT_end <- length(dy_dx_norm)
+  special_end <- TRUE
+}else{special_end <- FALSE }
+#subset to MT
+dy_dx_MT <- dy_dx[MT_start:MT_end]
+#filter data to only contain MT 
+test_MT <- test[c(FALSE, MT_start:MT_end),]
+#write results into output data frame
+#max growth rate
+res_GR$max_GR[res_GR$Site==x&res_GR$Date==i] <- max(dy_dx_MT, na.rm=T)*4 
+#res_GR$avg_GR[res_GR$Site==x&res_GR$Date==i] <- mean(dy_dx_MT, na.rm=T)*4 
+#mean growth rate
+res_GR$avg_GR[res_GR$Site==x&res_GR$Date==i] <- (max(test_MT$MLH, na.rm=T)-min(test_MT$MLH, na.rm=T))/
+  as.numeric(difftime(max(test_MT$time, na.rm=T), min(test_MT$time, na.rm=T), units = "hours")) 
+#get start of MT
+res_GR$MT_start[res_GR$Site==x&res_GR$Date==i] <- as.POSIXct(test_MT$time[1], tz="UTC") 
+#get end of MT
+res_GR$MT_end[res_GR$Site==x&res_GR$Date==i] <- as.POSIXct(test_MT$time[length(test_MT$date)], tz="UTC") 
+#get time of max slope
+if(special_end==TRUE){
+  res_GR$t_max_GR[res_GR$Site==x&res_GR$Date==i] <- as.POSIXct(test_MT$time[which.max(dy_dx_MT)], tz="UTC")
+}else{res_GR$t_max_GR[res_GR$Site==x&res_GR$Date==i] <- as.POSIXct(test_MT$time[which.max(dy_dx_MT)+1], tz="UTC")} 
+#start height MLH
+res_GR$MT_z_start[res_GR$Site==x&res_GR$Date==i] <- min(test_MT$MLH, na.rm=T) 
+#end height MLH
+res_GR$MT_z_end[res_GR$Site==x&res_GR$Date==i] <- max(test_MT$MLH, na.rm=T) 
+#duration of growth
+res_GR$MT_duration_h[res_GR$Site==x&res_GR$Date==i]  <- as.numeric(difftime(max(test_MT$time, na.rm=T), min(test_MT$time, na.rm=T), units = "hours")) 
+#create new dataframe with output obs and predicted fit
+all_MLH_pred <- rbind(all_MLH_pred, test_MT)
+#get date into format 
+datename <- as.character(gsub("-", "", i)) 
+#plot
+png(filename=paste0(output_dir, "/MLH/GR/", datename,"_", x,"_fitted_MT.png"), 
+    width = 10, height=15, units="cm", res=500)
+plot(test$index, test$MLH, xlab="Time", ylab="MLH (m)")
+lines(test$index, test$fit, col = "red", lwd = 2)
+lines(test_MT$index, test_MT$fit, col="blue", lwd=2)
+dev.off()
+    }, error = function(e) {
+      cat("Error during fitting:\n", e$message, "\n")  
+    })
+}
+}
+
+#all_MLH_pred <- all_MLH_pred[-1,]
+####plot backscatter with MLH stats###
+archive_dir <-  "C:/Urbisphere/07_Data/status-meteo-archive-mount/archive/urbisphere/data/L0/by-source/smurobs/by-location/France/Paris"
+i = "PAAUNA"
+datum = "2023-06-04"
+maxrange=2000
+plot_MLH_Stats  <- function(res, datum, maxrange){
+  for(i in c("PACHEM","PAROIS", "PAAUNA", "PAHOTE", "PACHAM" ,"PAMEUD", "PASIRT")){# 
+    datename <- as.character(gsub("-", "", datum))
+    setwd(paste0(archive_dir, "/", i, "/"))
+    print(i)
+    files <- list.files(pattern=paste0(datename, "T000000_"), recursive=T)
+    file <- files[grepl("version(v1.0.2)", files, fixed=T)]
+    if(length(file)>1){file <- file[2]}else{}
+    if(i=="PABOBI"){height=3
+    }else if(i=="PAROIS"){height=4
+    }else if(i=="PASIRT"){height=4.5
+    }else if(i=="PACHEM"){height=51
+    }else{height=0}
+    bsc <- alc_read_l1(file, var="rcs_0", offset = height, time_res = "1 min", #15 s
+                       range_max = maxrange)
+    mlh <- subset(all_MLH, ID==substr(i, start=3, stop=8)& date==as.Date(datum))
+    sunt <- subset(site_suntime, ID==i & date == datum)
+    res_sub <- res_GR[res_GR$Site==substr(i, start=3, stop=7)&as.Date(res_GR$Date)==as.Date(datum),]
+    pred_sub <- subset(all_MLH_pred, ID==substr(i, start=3, stop=8) & date==as.POSIXct(datum, tz="UTC"))
+
+    #plot
+    p <- ggplot(data=bsc, aes(time, as.numeric(range)))+
+      geom_tile(aes(fill=rcs_0))+
+      geom_point(data=mlh, aes(x=time, y=MLH, color="MLH"))+
+      ylab("Height agl [m]")+ xlab("Time [UTC]")+
+      scale_fill_viridis_c(name= expression(atop("log(" ~beta ~") "  , (m^-1~sr^-1))), 
+                           na.value = "grey", limits = c(10^-7, 10^-5), #option = "mako", 3*10^-6
+                           oob = censor, trans = "log10", n.breaks = 7, direction=-1)+
+      geom_line(data=pred_sub, aes(time, fit), color="red")+
+      scale_color_manual("", values="red")+
+      geom_vline(xintercept = as.POSIXct(res_sub$MT_start, tz="UTC"),
+                 color="black")+
+      geom_vline(xintercept = as.POSIXct(res_sub$MT_end, tz="UTC"),
+                 color="black")+
+      annotate("text", label="MT start", x=as.POSIXct(res_sub$MT_start, tz="UTC")+100, y=maxrange)+
+      annotate("text", label="MT end", x=as.POSIXct(res_sub$MT_end, tz="UTC")+100, y=maxrange)+
+      geom_vline(xintercept = as.POSIXct(res_sub$t_max_GR, tz="UTC"),
+                 color="blue")+
+      annotate("text", label=paste0("avg GR: ", round(res_sub$avg_GR, 0)), x=as.POSIXct(bsc$time[2], tz="UTC"), 
+               y=maxrange)+
+      annotate("text", label=paste0("max GR: ", round(res_sub$max_GR, 0)), 
+               x=as.POSIXct(res_sub$t_max_GR, tz="UTC")+100, y=maxrange-100, color="blue")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunrise), tz="UTC"), color="grey")+
+      annotate("text", label="SR", x=as.POSIXct(paste0(sunt$date, " ", 
+                                                       sunt$sunrise), tz="UTC")+100, y=maxrange, color="grey")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$solarNoon), tz="UTC"),
+                 color="grey", linetype="dashed")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunset), tz="UTC"),
+                 color="grey")+
+      annotate("text", label="SS", x=as.POSIXct(paste0(sunt$date, " ", 
+                                                       sunt$sunset), tz="UTC")+100, y=maxrange, color="grey")+
+      theme_bw()+theme(text = element_text(size=15), legend.key.size = unit(1, 'cm'))+
+      ylim(0,maxrange)#+
+    #xlim(as.POSIXct("2023-06-04 21:00:00", tz="UTC"), as.POSIXct("2023-06-05 00:00:00", tz="UTC"))
+    
+    ggsave(p, path= output_dir, filename= paste0("/MLH/case_study_days_mlh_stats_bsc/curve_fit_threshold/", 
+                                                 datum, "_", i, "_Bsc_MLH_Stats_low.png"), 
+           width=30, height=15, units="cm") #save 
+  }
+}
+
+plot_MLH_Stats(res=res_GR, datum=as.Date("2023-07-10"), maxrange=2100)
+
+for(i in c( "2023-06-05")){ #"2023-05-03",  "2023-06-05",
+  plot_MLH_Stats(res=res_GR, datum=as.Date(i), maxrange=3000)
+}
+
+####plot growth rate for paper####
+#rename BOBI to CHEM 
+res_GR <- res_GR %>%
+  group_by(Date, Site) %>%
+  filter(!( Site %in% c("BOBI","CHEM") & all(is.na(avg_GR)) ) ) %>%
+  ungroup()
+
+res_GR$Site[res_GR$Site=="BOBI"] <- "CHEM"
+#calculate positions along transect
+stations <- tribble(
+  ~code, ~lat, ~lon,
+  "CHAM", 49.219248, 2.611409,
+  "ROIS", 49.016006, 2.533696,
+  "CHEM", 48.904672, 2.444733,
+  "HOTE", 48.855890, 2.352010,
+  "MEUD", 48.803714, 2.240532,
+  "SIRT", 48.717200, 2.208870,
+  "AUNA", 48.431460, 1.831369) %>%
+  arrange(match(code, c("CHAM", "ROIS", "CHEM" ,"HOTE" ,"MEUD", "SIRT" ,"AUNA")))
+
+# Compute cumulative distance along transect (as you did)
+step_dists <- sapply(2:nrow(stations), function(i){
+  distVincentySphere(stations[i-1, c("lon","lat")],
+                     stations[i,   c("lon","lat")])})
+stations$dist_km <- c(0, cumsum(step_dists)) / 1000
+# Find index of HOTE
+hote_index <- which(stations$code == "HOTE")
+# Distance of HOTE along transect
+hote_dist <- stations$dist_km[hote_index]
+# Compute relative distances
+stations <- stations %>%
+  mutate(dist_from_HOTE = dist_km - hote_dist)
+
+names(stations)[5] <- "position"
+#join together
+res_GR <- left_join(res_GR, stations, by=c("Site"="code"))
+
+#for case days
+#add labels 
+lookup <- tribble(
+  ~season, ~class,  ~code,   ~date,        
+  "Summer", "across", "S3 (Across)", "2023-05-03", 
+  "Winter", "across",  "W3 (Across)", "2024-01-27",  
+  "Summer", "NE along",  "S1 (Along, NE)", "2023-06-05", 
+  "Winter","NE along", "W1 (Along, NE)", "2024-01-11", 
+  "Summer", "SW along", "S2 (Along, SW)", "2023-07-10", 
+  "Winter", "SW along",  "W2 (Along, SW)", "2024-01-16") 
+#join
+res_GR <- left_join(res_GR, lookup, by=c("Date"="date"))
+#flip positions
+res_GR$position[res_GR$code == "S2 (Along, SW)"]  <- res_GR$position[res_GR$code == "S2 (Along, SW)"]*-1
+res_GR$position[res_GR$code == "W2 (Along, SW)"]  <- res_GR$position[res_GR$code == "W2 (Along, SW)"]*-1
+#create labels 
+df_labels <- res_GR %>%
+  filter(!is.na(avg_GR)) %>%
+  group_by(Date,code) %>%
+  #summarise(maxvalue = max(avg_GR)) %>%
+  summarise(lastvalue = dplyr::last(avg_GR)) %>%
+  ungroup()
+
+#res_GR$avg_GR[res_GR$Site=="SIRT"&res_GR$Date=="2024-01-16"] <- NA
+####plot avg growth rate####
+res_GR %>%  ggplot(aes(x = position, y = avg_GR, color = code)) + ##color=as.numeric(position)
+  annotate("rect", xmin = -20.66667, xmax= 20.66667, ymin=-Inf, ymax=Inf, alpha=0.4, 
+           fill="lightgrey")+
+  geom_line(size = 1, na.rm=T) + 
+  geom_point(size = 2) +
+  annotate(geom="text", x = -55, y= 550, label="(B)", fontface="bold", size=8)+
+  annotate("text", x=0, y=20, label="built-up area", color="#363737", 
+           size=5, alpha=0.8)+
+  #plot dashed lines
+  #geom_segment(aes(x = -8.69289, xend = 19.93058, y = 288, yend = 172), color="#ED87D4", linetype="dashed") +
+  geom_segment(aes(x = -19.93058 , xend = 0, y = 436.84692, yend = 344.76803), 
+               color="#882255", linetype="dashed") +
+  geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 197.92755, yend = 181.47081), 
+               color="#00008B", linetype="dashed") +
+  geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 287.34026, yend = 293.09368), 
+               color="#E69F00", linetype="dashed") +
+  scale_x_continuous(breaks = seq(from=-62, to=62, length.out=7), 
+                      labels = c("upwind","" ,
+                                 "","","","","downwind"),
+                      name = "Along wind cases",
+                     sec.axis = dup_axis(labels = c("(left)","" ,"","","","","(right)"),
+                                         name="Across wind cases"))+
+  scale_color_manual("", values =  c("#E69F00", "#70C4C0", "#00008B", "#879CED", "#882255", "#ED87D4"))+
+  ylab(bquote('Average growth rate '(m~h^-1)))+
+  theme_bw() + theme(legend.position = "none", text=element_text(size=16),#
+                     strip.background = element_blank(),
+                     strip.text.x = element_blank(), 
+                     panel.grid.minor.x = element_blank())+
+#facet_wrap(~code, nrow=2, scale="free_y")+
+geom_text(data = df_labels, aes(label = code, x= 62, y=lastvalue), #case day
+     hjust = 1, size = 5, vjust=-1)#, vjust=c(4, # S3 (Across)
+                           #1, #S1 (Along, NE)  
+                          #5, #S2 (Along, SW) 
+                        #5, #W1 (Along, NE)   
+                       #6, #W2 (Along, SW)
+                     #-1))#+  #W3 (Across) 
+
+ggsave(path = output_dir,
+       filename = paste0("paper_graphs/GR_daily_avg.png"),
+       width = 17, height = 20, units = "cm")
+
+####plot start height of MT####
+df_labels <- res_GR %>%
+  filter(!is.na(avg_GR)) %>%
+  group_by(Date,code) %>%
+  #summarise(maxvalue = max(avg_GR)) %>%
+  summarise(lastvalue = dplyr::last(MT_z_start)) %>%
+  ungroup()
+
+res_GR %>%  ggplot(aes(x = position, y = MT_z_start, color = code)) + ##color=as.numeric(position)
+  annotate("rect", xmin = -8.69289, xmax= 10.02358, ymin=-Inf, ymax=Inf, alpha=0.4, 
+           fill="lightgrey")+
+  geom_line(size = 1, na.rm=T) + 
+  geom_point(size = 2) +
+  annotate(geom="text", x = -55, y= 500, label="(B)", fontface="bold", size=8)+
+  #plot dashed lines
+  #geom_segment(aes(x = -8.69289, xend = 19.93058, y = 288, yend = 172), color="#ED87D4", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 172, yend = 230), color="#882255", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 133.87816, yend = 157.67579), 
+   #            color="#00008B", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 277.23056, yend = 259.28375), 
+   #            color="#E69F00", linetype="dashed") +
+  scale_x_continuous( breaks = round(positions, 0), #labels = labels,#function(x) round(x, 0), 
+                      name = "Distance to city center (km)",
+                      #guide = guide_axis(n.dodge = 2)
+  ) +
+  scale_color_manual("", values =  c("#E69F00", "#70C4C0", "#00008B", "#879CED", "#882255", "#ED87D4"))+
+  ylab('MT start height (m)')+
+  theme_bw() + theme(legend.position = "none", text=element_text(size=16),#
+                     strip.background = element_blank(),
+                     strip.text.x = element_blank(), 
+                     panel.grid.minor.x = element_blank())+
+  #facet_wrap(~code, nrow=2, scale="free_y")+
+  geom_text(data = df_labels, aes(label = code, x= 62, y=lastvalue), #case day
+            hjust = 1, size = 5)#, vjust=c(4, # S3 (Across)
+#1, #S1 (Along, NE)  
+#5, #S2 (Along, SW) 
+#5, #W1 (Along, NE)   
+#6, #W2 (Along, SW)
+#-1))#+  #W3 (Across) 
+
+ggsave(path = output_dir,
+       filename = paste0("paper_graphs/GR_start_height.png"),
+       width = 15, height = 20, units = "cm")
+
+####max growth rate ####
+df_labels <- res_GR %>%
+  filter(!is.na(avg_GR)) %>%
+  group_by(Date,code) %>%
+  #summarise(maxvalue = max(avg_GR)) %>%
+  summarise(lastvalue = dplyr::last(max_GR)) %>%
+  ungroup()
+
+res_GR %>%  ggplot(aes(x = position, y = max_GR, color = code)) + ##color=as.numeric(position)
+  annotate("rect", xmin = -8.69289, xmax= 10.02358, ymin=-Inf, ymax=Inf, alpha=0.4, 
+           fill="lightgrey")+
+  geom_line(size = 1, na.rm=T) + 
+  geom_point(size = 2) +
+  annotate(geom="text", x = -55, y= 1000, label="(B)", fontface="bold", size=8)+
+  #plot dashed lines
+  #geom_segment(aes(x = -8.69289, xend = 19.93058, y = 288, yend = 172), color="#ED87D4", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 172, yend = 230), color="#882255", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 133.87816, yend = 157.67579), 
+   #            color="#00008B", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 277.23056, yend = 259.28375), 
+   #            color="#E69F00", linetype="dashed") +
+  scale_x_continuous( breaks = round(positions, 0), #labels = labels,#function(x) round(x, 0), 
+                      name = "Distance to city center (km)",
+                      #guide = guide_axis(n.dodge = 2)
+ ) +
+  scale_color_manual("", values =  c("#E69F00", "#70C4C0", "#00008B", "#879CED", "#882255", "#ED87D4"))+
+  ylab(bquote('Max. growth rate '(m~h^-1)))+
+  theme_bw() + theme(legend.position = "none", text=element_text(size=16),#
+                     strip.background = element_blank(),
+                     strip.text.x = element_blank(), 
+                     panel.grid.minor.x = element_blank())+
+  geom_text(data = df_labels, aes(label = code, x= 62, y=lastvalue), #case day
+            hjust = 1, size = 5)#, vjust=c(4, # S3 (Across)
+  
+ggsave(path = output_dir,
+       filename = paste0("paper_graphs/GR_daily_max.png"),
+       width = 15, height = 20, units = "cm")
+
+####timing along transect #####
+#calculate timing relative to sunrise
+res_GR <- res_GR %>% mutate(Date = as.Date(Date))
+sun_times <- site_suntime %>%  rename(Date = date, Site = ID) #rename
+sun_times <- sun_times %>%  mutate(sunrise_time = ymd_hms(paste(Date, sunrise), tz = "UTC"))
+sun_times <- sun_times %>%  mutate(sunset_time = ymd_hms(paste(Date, sunset), tz = "UTC"))
+sun_times$Site <- substr(sun_times$Site, start=3, stop=8)
+res_GR <- res_GR %>%  left_join(sun_times %>% dplyr::select(Site, Date, sunrise_time, sunset_time), by = c("Site", "Date"))
+rm(sun_times)
+res_GR$MT_start <-  as.POSIXct(res_GR$MT_start, tz="UTC")
+res_GR$t_max_GR_rel <- res_GR$t_max_GR-res_GR$MT_start #time of maximum growth
+res_GR$t_max_GR_rel_to_SR <- res_GR$t_max_GR-res_GR$sunrise_time #time of maximum growth rel to sunrise
+res_GR$t_MT_start_rel <- res_GR$MT_start-res_GR$sunrise_time  #time of start of growth
+
+#labels
+df_labels <- res_GR %>%
+  filter(!is.na(avg_GR)) %>%
+  group_by(Date,code) %>%
+  #summarise(maxvalue = max(avg_GR)) %>%
+  summarise(lastvalue = dplyr::last(t_max_GR_rel/60)) %>%
+  ungroup()
+#plot  
+res_GR %>%  ggplot(aes(x = position, y = t_max_GR_rel/60, color = code)) + ##color=as.numeric(position)
+  annotate("rect", xmin = -8.69289, xmax= 10.02358, ymin=-Inf, ymax=Inf, alpha=0.4, 
+           fill="lightgrey")+
+  geom_line(size = 1, na.rm=T) + 
+  geom_point(size = 2) +
+  annotate(geom="text", x = -55, y= 6, label="(B)", fontface="bold", size=8)+
+  #plot dashed lines
+  #geom_segment(aes(x = -8.69289, xend = 19.93058, y = 288, yend = 172), color="#ED87D4", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 172, yend = 230), color="#882255", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 133.87816, yend = 157.67579), 
+  #            color="#00008B", linetype="dashed") +
+  #geom_segment(aes(x = -46.01124 , xend = -8.69289, y = 277.23056, yend = 259.28375), 
+  #            color="#E69F00", linetype="dashed") +
+  scale_x_continuous( breaks = round(positions, 0), #labels = labels,#function(x) round(x, 0), 
+                      name = "Distance to city center (km)",
+                      #guide = guide_axis(n.dodge = 2)
+  ) +
+  scale_color_manual("", values =  c("#E69F00", "#70C4C0", "#00008B", "#879CED", "#882255", "#ED87D4"))+
+  ylab('max GR after SR (h)')+
+  theme_bw() + theme(legend.position = "none", text=element_text(size=16),#
+                     strip.background = element_blank(),
+                     strip.text.x = element_blank(), 
+                     panel.grid.minor.x = element_blank())+
+  #facet_wrap(~code, nrow=2, scale="free_y")+
+  geom_text(data = df_labels, aes(label = code, x= 62, y=lastvalue), #case day
+            hjust = 1, size = 5)#, vjust=c(4, # S3 (Across)
+#1, #S1 (Along, NE)  
+#5, #S2 (Along, SW) 
+#5, #W1 (Along, NE)   
+#6, #W2 (Along, SW)
+#-1))#+  #W3 (Across) 
+
+ggsave(path = output_dir,
+       filename = paste0("paper_graphs/GR_time_max_after_SR.png"),
+       width = 15, height = 20, units = "cm")
+
+####relationship max ML and GR / start height####
+#for upwind / urban /downwind
+id_labels_SW <- c("CHAM" = "downwind", "ROIS" = "downwind", 
+                  "CHEM" = "city", "HOTE" =  "city",
+                  "MEUD" = "city", "SIRT" = "upwind", 
+                  "AUNA" = "upwind")
+#NE
+id_labels_NE <- c("CHAM" = "upwind", "ROIS" = "upwind", 
+                  "CHEM" = "city", "HOTE" =  "city",
+                  "MEUD" = "city", "SIRT" = "downwind", 
+                  "AUNA" = "downwind")
+
+#use ID labels instead of site codes
+#SW
+id_labels_SW <- c("CHAM" = "downwind rural", "ROIS" = "downwind urban fringe", 
+                  "CHEM" = "downwind outer city", "HOTE" =  "inner city",
+                  "MEUD" = "upwind outer city", "SIRT" = "upwind urban fringe", 
+                  "AUNA" = "upwind rural")
+#NE
+id_labels_NE <- c("CHAM" = "upwind rural", "ROIS" = "upwind urban fringe", 
+                  "CHEM" = "upwind outer city", "HOTE" =  "inner city",
+                  "MEUD" = "downwind outer city", "SIRT" = "downwind urban fringe", 
+                  "AUNA" = "downwind rural")
+
+res_GR <- res_GR %>% mutate(code = case_when(
+  Date %in% cond_SW_few$Date ~ id_labels_SW[Site],
+  Date %in% cond_NE_few$Date ~ id_labels_NE[Site],
+  TRUE ~ NA_character_  ))
+
+res_GR$season <- "winter"
+res_GR$season[res_GR$Date> as.POSIXct("2023-03-20", tz="UTC") & res_GR$Date < as.POSIXct("2023-09-23", tz="UTC")]<- "summer"
+res_GR$windclass  <- "NE"
+res_GR$windclass[res_GR$Date %in% cond_SW_few$Date] <- "SW"
+#remove MEUD 4th April
+res_GR[res_GR$Site=="MEUD"&res_GR$Date=="2023-04-04",c(3:10, 16:18)]<-NA
+
+ggplot(res_GR)+
+  geom_point(aes(x=MT_z_start, y=MT_z_end, color=season))+
+  theme_bw()+xlab("initial MLH (m)")+ylab("maximum MLH (m)")+
+  theme(text=element_text(size=15))
+ggsave(path = output_dir, filename = paste0("paper_graphs/maxMLH_vs_startHeight_byseason.png"),
+       width = 20, height = 15, units = "cm")
+
+summary(lm(MT_z_end~MT_z_start, data=res_GR))#p-value: 8.978e-11
+
+ggplot(res_GR)+
+  geom_point(aes(x=avg_GR, y=MT_z_end, color=season))+
+  theme_bw()+xlab("average GR (m/h)")+ylab("maximum MLH (m)")+
+  theme(text=element_text(size=15))
+ggsave(path = output_dir, filename = paste0("paper_graphs/maxMLH_vs_avgGR_byseason.png"),
+       width = 20, height = 15, units = "cm")
+
+summary(lm(MT_z_end~avg_GR, data=res_GR)) #p-value: 1.791e-14
+
+ggplot(res_GR)+
+  geom_point(aes(x=max_GR, y=MT_z_end, color=season))+
+  theme_bw()+xlab("max GR (m/h)")+ylab("maximum MLH (m)")+
+  theme(text=element_text(size=15))
+ggsave(path = output_dir, filename = paste0("paper_graphs/maxMLH_vs_maxGR_byseason.png"),
+       width = 20, height = 15, units = "cm")
+
+summary(lm(MT_z_end~max_GR, data=res_GR))#p-value: 4.176e-10
+
+ggplot(res_GR)+
+  geom_point(aes(x=max_GR, y=MT_duration_h, color=season))+
+  theme_bw()+xlab("max GR (m/h)")+ylab("Duration MT (h)")+
+  theme(text=element_text(size=15))
+ggsave(path = output_dir, filename = paste0("paper_graphs/MT_duration_vs_maxGR_byseason.png"),
+       width = 20, height = 15, units = "cm")
+
+ggplot(res_GR)+
+  geom_point(aes(x=MT_z_end, y=MT_duration_h, color=season))+
+  theme_bw()+xlab("maximum MLH (m)")+ylab("Duration MT (h)")+
+  theme(text=element_text(size=15))
+ggsave(path = output_dir, filename = paste0("paper_graphs/MT_duration_vs_maxMLH_byseason.png"),
+       width = 20, height = 15, units = "cm")
+
+#maybe do a plot of duration vs day length? 
+
+####heat maps, boxplots, stats ####
+GeomErrorbar$draw_key  <-   function (data, params, size) {
+  data$linetype[is.na(data$linetype)] <- 0 ;
+  segmentsGrob(c(0.2, 0.2, 0.5),
+               c(0.2, 0.8, 0.2),
+               c(0.8, 0.8, 0.5),
+               c(0.2, 0.8, 0.8),
+               gp = gpar(col = alpha(data$colour,
+                                     data$alpha), 
+                         lwd = data$linewidth * .pt,
+                         lty = data$linetype,
+                         lineend = "butt"), 
+               arrow = params$arrow)}
+#summerise data
+#### stats start MLH ####
+qqnorm(log(res_GR$MT_z_start))
+qqline(log(res_GR$MT_z_start))
+
+shapiro.test(res_GR$MT_z_start)
+hist(res_GR$MT_z_start, breaks = 20)
+
+m <- lmer(MT_z_start ~ code + (1 | Date), data=res_GR)
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code) 
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+#make df for plotting significance brackets
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" - .*", "", contrast), 
+         group2 = sub(".* - ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(res_GR$MT_z_start, na.rm=T)+ 
+                                   row_number() * 30)
+
+#### boxplots start MLH ####
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(MT_z_start, ties.method = "first"))) %>%       
+         #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+#complete dataframe
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(res_GR_jit$code))
+
+#calculate sample size
+n_df <- res_GR_jit %>% drop_na(MT_z_start) %>% count(code, name = "n") %>%
+  mutate(label = paste0("n = ", n), y = max(res_GR_jit$MT_z_start, na.rm = TRUE) * 1.05) 
+
+# Plot with point size
+res_GR_jit  %>% drop_na(MT_z_start)  %>% ggplot() +
+  #geom_boxplot(aes(x = code, y = MT_z_start), outlier.shape = NA) +
+  geom_line(aes(x = x_jit,  y = MT_z_start, group = Date, color="day"),
+            alpha = 0.5, linewidth = 0.6, na.rm = FALSE) +
+  geom_point(aes(x = x_jit,  y = MT_z_start, size = rank_GR, fill=rank_GR),
+             alpha = 0.6, color = "black", shape = 21) +#, fill = "grey70"
+  paletteer::scale_fill_paletteer_d(name = "within day",
+                                    "colorBlindness::LightBlue2DarkBlue7Steps",
+                                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  scale_color_manual(name = expression(atop(bar(m)~"modelled mean" , "n = sample size   ")),
+                     values = c("modelled \nmean" = "black","confidence \nlimits" = "black", "day" = "grey70"),
+                     limits = c( "modelled \nmean", "confidence \nlimits","day"))+
+  scale_size_manual(name = "within day", values = c(1, 2, 3, 4, 5, 6,7),
+                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  guides(fill = guide_legend(reverse=T), 
+         size = guide_legend(reverse=T))+
+  theme_bw(base_size = 14) + ylab("Initial MLH (m)")+
+  theme(axis.title.x = element_blank(), #legend.position = "right", 
+        text=element_text(size=18), legend.position="none")+
+  scale_x_discrete(
+    labels = function(x) {
+      new_names <- c("upwind rural" = "rural",
+        "upwind urban fringe"  = "urban fringe",
+        "upwind outer city"  = "outer city",
+        "inner city" = "inner city",
+        "downwind outer city"  = "outer city",
+        "downwind urban fringe"  = "urban fringe",
+        "downwind rural" = "rural")
+      stringr::str_wrap(new_names[x], width = 10)})+
+  annotate("text", x = Inf, y = Inf, label = "(F)",
+           hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  #scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 10))+
+  geom_point(data = emm_df, aes(x = code, y = emmean, colour = "modelled \nmean"), size = 4) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL, ymax = upper.CL, 
+                                   colour = "confidence \nlimits"), width = 0.2, lwd=1)+
+  #stat_pvalue_manual(p_values, label = "signif")+
+  geom_text(data = emm_df, aes(x = code, y = 0, #winter 400
+                               label = sprintf("paste(bar(m), ' = ', %s)", round(emmean,0))),
+            size = 5, parse =TRUE)#+
+  #geom_text(data = n_df, aes(x = code, y = y, label = label), size = 5)
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/MT_start_spaghetti_new.png"), 
+       width=30, height=15, units="cm")
+
+#extract only legend 
+legends <- cowplot::get_legend(p)
+cowplot::plot_grid(legends)
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/spaghetti_legend.png"),
+       width=20, height=5, units="cm")
+
+#### heatmap start MLH ####
+GR_wide <- res_GR %>%
+  #subset(season=="summer")  %>%
+  #subset(windclass=="NE")  %>%
+  select(Date, code, MT_z_start) %>%
+  pivot_wider(names_from = code, values_from = MT_z_start)
+
+GR_wide <- GR_wide[complete.cases(GR_wide),]
+labeladdition <- "CC"
+labeladdition <- ""
+labeladdition <- "summer"
+labeladdition <- "NE"
+
+# site names
+sites <- colnames(GR_wide)[-c(1, 10)]  # exclude tod_hms, date, class
+
+# empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                      dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(GR_wide[[i]]) & !is.na(GR_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(GR_wide[[i]][both_present] > GR_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(GR_wide[[i]][both_present] == GR_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurence
+
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+         label = ifelse(!is.na(prop_gt), paste0(round(prop_gt, 1), "\n(n=", n, ")"), ""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+#plot half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(data = subset(norm_df_half, site1 != site2),
+            aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 5, vjust = 1.2) +
+  scale_fill_gradient2("Number of days when MLH \nat start of MT is higher \nat Site Y than at Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "initial MLH at \nSite Y lower", 
+                                  "Sites are equal", "initial MLH at \nSite Y higher", 
+                                  "100%")) +
+  theme_bw() +
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))),
+                   labels = function(x) {
+      new_names <- c("upwind rural" = "rural",
+                     "upwind urban fringe"  = "urban fringe",
+                     "upwind outer city"  = "outer city",
+                     "inner city" = "inner city",
+                     "downwind outer city"  = "outer city",
+                     "downwind urban fringe"  = "urban fringe",
+                     "downwind rural" = "rural")
+      stringr::str_wrap(new_names[x], width = 10)})+
+  scale_y_discrete( labels = function(x) {
+      new_names <- c("upwind rural" = "rural",
+                     "upwind urban fringe"  = "urban fringe",
+                     "upwind outer city"  = "outer city",
+                     "inner city" = "inner city",
+                     "downwind outer city"  = "outer city",
+                     "downwind urban fringe"  = "urban fringe",
+                     "downwind rural" = "rural")
+      stringr::str_wrap(new_names[x], width = 5)})+
+  annotate("text", x = Inf, y = Inf, label = "(E)",
+           hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  #scale_y_discrete(labels = function(x) stringr::str_wrap(x, width = 12))+
+  #scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   #guide = guide_axis(n.dodge = 2),
+                   #labels = function(x) stringr::str_wrap(x, width = 10))+ 
+  theme(text = element_text(size=20),
+        axis.title.y=element_text(angle=0, vjust=0.5),
+        legend.key.size=unit(2, "cm"), legend.position="none",
+        plot.margin = unit(c(0.01, 0.01, 0.01, 0.01), units="npc"),
+        legend.title=element_text(margin = margin(b=12), size=17)) +
+  labs(x = "Site X", y = "Site Y")#+
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/heatmaps/MT_start", 
+                                        labeladdition, "_binary_percent_half_new.png"), 
+       width=30, height=15, units="cm")
+
+#####stats maximum GR####
+#try bootstrapped median with CI#
+library(boot)
+bootstrap_median <- function(x, R = 10000) {
+  x <- x[!is.na(x)]  # remove NAs
+  if(length(x) < 2){   # not enough data to bootstrap
+    return(c(median = median(x), lower = NA, upper = NA))}
+  boot_res <- boot(x, statistic = function(data, ind) median(data[ind]), R = R)
+  ci <- boot.ci(boot_res, type = "perc")$percent[4:5]  # lower & upper CI
+  return(c(median = median(x), lower = ci[1], upper = ci[2]))}
+
+# Apply to each site
+boot_CI <- res_GR %>% group_by(code) %>%
+  summarise(median_ci = list(bootstrap_median(avg_GR))) %>%
+  tidyr::unnest_wider(median_ci)
+
+#plot
+ggplot(boot_CI, aes(x = code, y = median)) +
+  geom_point(size = 3, color = "blue") +             # median points
+  geom_errorbar(aes(ymin = lower, ymax = upper),     # 95% CI
+                width = 0.2, color = "blue") +
+  labs(y = "Median MLH Growth Rate (m/h)", x = "Site") +
+  theme_bw()
+
+#Mixed effects model##
+#res_GR_copy2 <- res_GR
+#res_GR <- subset(res_GR_copy2, season=="winter")
+qqnorm(log(res_GR$max_GR))
+qqline(log(res_GR$max_GR))
+shapiro.test(log(res_GR$max_GR))
+hist(log(res_GR$max_GR), breaks = 20)
+
+m <- lmer(log(max_GR) ~ code + (1 | Date), data=res_GR)
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code, type="response") 
+
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" / .*", "", contrast), 
+         group2 = sub(".* / ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                                                                 ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(res_GR$max_GR, na.rm=T)+ 
+                                   row_number() * 70)
+
+
+####boxplot maximum GR####
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(dplyr::n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(max_GR, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(res_GR_jit$code))
+
+#calculate sample size
+n_df <- res_GR_jit %>% drop_na(max_GR) %>% count(code, name = "n") %>%
+  mutate(label = paste0("n = ", n), y = max(res_GR_jit$max_GR, na.rm = TRUE) * 1.05) 
+
+# Plot with point size
+res_GR_jit  %>% drop_na(max_GR)  %>% ggplot() +
+  #geom_boxplot(aes(x = code, y = MT_z_start), outlier.shape = NA) +
+  geom_line(aes(x = x_jit,  y = max_GR, group = Date, color="day"),
+            alpha = 0.5, linewidth = 0.6, na.rm = FALSE) +
+  geom_point(aes(x = x_jit,  y = max_GR, size = rank_GR, fill=rank_GR),
+             alpha = 0.6, color = "black", shape = 21) +#, fill = "grey70"
+  paletteer::scale_fill_paletteer_d(name = "within day",
+                                    "colorBlindness::LightBlue2DarkBlue7Steps",
+                                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  scale_color_manual(name = expression(atop(bar(m)~"modelled mean" , "n = sample size   ")),
+                     values = c("modelled \nmean" = "black","confidence \nlimits" = "black", "day" = "grey70"),
+                     limits = c( "modelled \nmean", "confidence \nlimits","day"))+
+  scale_size_manual(name = "within day", values = c(1, 2, 3, 4, 5, 6,7),
+                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  guides(fill = guide_legend(reverse=T), 
+         size = guide_legend(reverse=T))+
+  theme_bw(base_size = 14) + ylab(bquote('Maximum GR '(m~h^-1)))+
+  theme(legend.position = "none", axis.title.x = element_blank(), 
+        text=element_text(size=18))+
+  annotate("text", x = Inf, y = Inf, label = "(D)",
+           hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  scale_x_discrete(labels = function(x) {
+      new_names <- c("upwind rural" = "rural",
+                     "upwind urban fringe"  = "urban fringe",
+                     "upwind outer city"  = "outer city",
+                     "inner city" = "inner city",
+                     "downwind outer city"  = "outer city",
+                     "downwind urban fringe"  = "urban fringe",
+                     "downwind rural" = "rural")
+      stringr::str_wrap(new_names[x], width = 10)})+
+  #scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 10))+
+  geom_point(data = emm_df, aes(x = code, y = response, colour = "modelled \nmean"), size = 4) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL, ymax = upper.CL, 
+                                   colour = "confidence \nlimits"), width = 0.2, lwd=1)+
+  geom_text(data = emm_df, aes(x = code, y = 0, #winter 400
+                               label = sprintf("paste(bar(m), ' = ', %s)", round(response,0))),
+            size = 5, parse =TRUE)#+
+  #geom_text(data = n_df, aes(x = code, y = y, label = label), size = 5)
+
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/max_GR_spaghetti_new.png"), 
+       width=30, height=15, units="cm")
+
+####heatmap maximum GR####
+GR_wide <- res_GR %>%
+  #subset(season=="summer")  %>%
+  #subset(windclass=="NE")  %>%
+  select(Date, code, max_GR) %>%
+  pivot_wider(names_from = code, values_from = max_GR)
+
+GR_wide <- GR_wide[complete.cases(GR_wide),]
+labeladdition <- "CC"
+
+labeladdition <- ""
+labeladdition <- "summer"
+labeladdition <- "NE"
+
+res_GR %>% mutate(code = factor(code, levels =  rev(names(colors)))) %>%
+ggplot(aes(x=code, y=max_GR))+
+  geom_line(aes(group = Date), color= "grey", linewidth = 0.6, alpha = 0.6) +  
+  geom_jitter(width = 0.15, size = 1.5, alpha = 0.8)+
+  geom_boxplot(outlier.shape = NA, fill="transparent")+
+  theme_bw()+theme(legend.position = "none")  
+
+# site names
+sites <- colnames(GR_wide)[-c(1, 10)]  # exclude tod_hms, date, class
+
+# empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                      dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(GR_wide[[i]]) & !is.na(GR_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(GR_wide[[i]][both_present] > GR_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(GR_wide[[i]][both_present] == GR_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurence
+
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+         label = ifelse(!is.na(prop_gt), paste0(round(prop_gt, 1), "\n(n=", n, ")"), ""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+#get half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+#plot half heatmap
+p=ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(data = subset(norm_df_half, site1 != site2),
+            aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 5, vjust = 1.2) +
+  scale_fill_gradient2("Number of days when Site Y \nis higher than Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "Site Y\nlower", 
+                                  "Sites are\nequal", "Site Y\nhigher", 
+                                  "100%")) +
+  theme_bw() +
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))),
+                   labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 10)})+
+  scale_y_discrete( labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 5)})+
+  annotate("text", x = Inf, y = Inf, label = "(C)",
+           hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  #scale_y_discrete(labels = function(x) stringr::str_wrap(x, width = 12))+
+  #scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   #guide = guide_axis(n.dodge = 2),
+                  # labels = function(x) stringr::str_wrap(x, width = 10))+ 
+  theme(text = element_text(size=20),  legend.direction = "horizontal",
+        legend.key.size=unit(2, "cm"), #legend.position="none",
+        axis.title.y = element_text(angle=0, vjust=0.5),
+        plot.margin = unit(c(0.01, 0.01, 0.01, 0.01), units="npc"),
+        legend.title=element_text(margin = margin(b=12), size=17)) +
+  labs(x = "Site X", y = "Site Y")#+
+
+ggsave(path=output_dir, 
+       filename=paste0("MLH/GR/heatmaps/max_GR_binary_percent_half_new.png"), #  labeladdition,
+       width=30, height=15, units="cm")
+
+#extract only legend 
+legends <- cowplot::get_legend(p)
+cowplot::plot_grid(legends)
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/binary_legend.png"),
+       width=20, height=5, units="cm")
+
+#####stats maximum GR timing####
+qqnorm(as.numeric(res_GR$t_max_GR_rel_to_SR))
+qqline(as.numeric(res_GR$t_max_GR_rel_to_SR))
+
+shapiro.test(log(as.numeric(res_GR$t_max_GR_rel_to_SR)))
+hist(log(as.numeric(res_GR$t_max_GR_rel_to_SR)), breaks = 15)
+
+m <- lmer(as.numeric(t_max_GR_rel_to_SR) ~ code + (1 | Date), data=res_GR)
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code) 
+
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" - .*", "", contrast), 
+         group2 = sub(".* - ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                                                                 ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(res_GR$t_max_GR_rel_to_SR, na.rm=T)+ 
+                                   row_number() * 70)
+
+#####boxplots maximum GR timing####
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(t_max_GR_rel_to_SR, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(res_GR_jit$code))
+
+#calculate sample size
+n_df <- res_GR_jit %>% drop_na(t_max_GR_rel_to_SR, code) %>% count(code, name = "n") %>%
+  mutate(label = paste0("n = ", n), y = max(res_GR_jit$t_max_GR_rel_to_SR, na.rm = TRUE) * 1.05) 
+
+# Plot with point size
+res_GR_jit  %>% drop_na(t_max_GR_rel_to_SR, code)  %>% ggplot() +
+  #geom_boxplot(aes(x = code, y = MT_z_start), outlier.shape = NA) +
+  geom_line(aes(x = x_jit,  y = t_max_GR_rel_to_SR, group = Date, color="day"),
+            alpha = 0.5, linewidth = 0.6, na.rm = FALSE) +
+  geom_point(aes(x = x_jit,  y = t_max_GR_rel_to_SR, size = rank_GR, fill=rank_GR),
+             alpha = 0.6, color = "black", shape = 21) +#, fill = "grey70"
+  paletteer::scale_fill_paletteer_d(name = "within day",
+                                    "colorBlindness::LightBlue2DarkBlue7Steps",
+                                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  scale_color_manual(name = expression(atop(bar(m)~"modelled mean" , "n = sample size   ")),
+                     values = c("modelled \nmean" = "black",
+                                "confidence \nlimits" = "black",
+                                "day" = "grey70"),
+                     limits = c( "modelled \nmean", "confidence \nlimits","day"))+
+  scale_size_manual(name = "within day", values = c(1, 2, 3, 4, 5, 6,7),
+                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  guides(fill = guide_legend(reverse=T), 
+         size = guide_legend(reverse=T))+
+  theme_bw(base_size = 14) + ylab("Time of max. GR (h after SR)")+
+  theme(legend.position = "none", axis.title.x = element_blank(), 
+        text=element_text(size=18), legend.title=element_text(size=14))+
+  scale_x_discrete(labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 10)})+
+  #scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 10))+
+  geom_point(data = emm_df, aes(x = code, y = emmean, colour = "modelled \nmean"), size = 4) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL, ymax = upper.CL, 
+                                   colour = "confidence \nlimits"), width = 0.2, lwd=1)+
+  #stat_pvalue_manual(p_values, label = "signif")+
+  geom_text(data = emm_df, aes(x = code, y =1.8, #winter 400 summer 950
+                               label = sprintf("paste(bar(m), ' = ', %s)", round(emmean,1))),
+            size = 5, parse =TRUE)+
+  geom_text(data = n_df, aes(x = code, y = y, label = label), size = 5)
+
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/t_max_GR_spaghetti_lmer_signif.png"), 
+       width=30, height=15, units="cm")
+
+#####heatmap maximum GR timing####
+GR_wide <- res_GR %>%
+  #subset(season=="winter")  %>%
+  #subset(windclass=="SW")  %>%
+  select(Date, code, t_max_GR_rel) %>%
+  pivot_wider(names_from = code, values_from = t_max_GR_rel)
+
+GR_wide <- GR_wide[complete.cases(GR_wide),]
+labeladdition <- "CC"
+
+labeladdition <- ""
+labeladdition <- "winter"
+labeladdition <- "SW"
+# site names
+sites <- colnames(GR_wide)[-c(1, 10)]  # exclude tod_hms, date, class
+
+# empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                      dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(GR_wide[[i]]) & !is.na(GR_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(GR_wide[[i]][both_present] > GR_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(GR_wide[[i]][both_present] == GR_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurence
+
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+         label = ifelse(!is.na(prop_gt), paste0(round(prop_gt, 1), "\n(n=", n, ")"), ""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+#get half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+#plot half heatmap
+ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 3, vjust = 1.2) +
+  scale_fill_gradient2("Number of days when \ntime of max GR is \nlater at Site Y than \nat Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "time of max GR \nat Site Y earlier", 
+                                  "Sites are equal", "time of max GR \nat Site Y later", 
+                                  "100%")) +
+  theme_bw() +
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   guide = guide_axis(n.dodge = 2))+ 
+  theme(text = element_text(size=18),
+        legend.key.size=unit(2, "cm"),
+        legend.title=element_text(margin = margin(b=12))
+        #legend.title = element_text(color="white"),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y = element_blank()
+  ) +
+  labs(x = "Site X", y = "Site Y")
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/heatmaps/t_max_GR_", 
+       labeladdition, "_binary_percent_half.png"), 
+       width=30, height=15, units="cm")
+#####stats maximum GR rel to sunrisetiming####
+qqnorm(as.numeric(res_GR$t_max_GR_rel_to_SR))
+qqline(as.numeric(res_GR$t_max_GR_rel_to_SR))
+
+shapiro.test(log(as.numeric(res_GR$t_max_GR_rel_to_SR)))
+hist(log(as.numeric(res_GR$t_max_GR_rel_to_SR)), breaks = 15)
+
+m <- lmer(as.numeric(t_max_GR_rel_to_SR) ~ code + (1 | Date), data=res_GR)
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code) 
+
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+plot(emmeans(m, ~ code, type="response"))
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" - .*", "", contrast), 
+         group2 = sub(".* - ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                                                                 ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(res_GR$t_max_GR_rel_to_SR, na.rm=T)+ 
+                                   row_number() * 70)
+
+#####boxplots maximum GR rel to sunrise timing####
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(t_max_GR_rel_to_SR, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(res_GR_jit$code))
+
+# Plot with point size
+ggplot(res_GR_jit) +
+  #geom_boxplot(outlier.shape = NA, aes(x = code, y = t_max_GR_rel)) +
+  geom_line(aes(x = x_jit, y = t_max_GR_rel_to_SR, group = Date),
+            color = "grey70", alpha = 0.5, linewidth = 0.6) +
+  geom_point(aes(x = x_jit, y = t_max_GR_rel_to_SR, size = rank_GR, fill=rank_GR),
+             alpha = 0.85, color = "black", shape = 21) +#, fill = "grey70"
+  scale_size_continuous(name = "Rank \nwithin day",
+                        range = c(2, 6),
+                        guide = guide_legend(reverse = TRUE)) +
+  scale_fill_brewer(name = "Rank \nwithin day", palette="Blues")+
+  scale_color_manual( values = c("modelled \nmean" = "black","confidence \nlimits" ="black"))+
+  scale_size_manual(name = "Rank \nwithin day",
+                    values = c(1, 2, 3, 4, 5, 6,7)) +
+  guides(fill = guide_legend(override.aes = list(size = rev(c(1, 2, 3, 4, 5, 6,7))), reverse=T),
+         size = "none", size= guide_legend(reverse=TRUE)) +
+  theme_bw(base_size = 14) +ylab("Time of max. GR (h after SR)")+
+  theme(legend.position = "right", axis.title.x = element_blank(), legend.title = element_blank())+
+  scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 10))+
+  geom_point(data = emm_df, aes(x = code, y = emmean, colour = "modelled \nmean"), size = 3) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL, ymax = upper.CL, 
+                                   colour = "confidence \nlimits"), width = 0.2)+
+  stat_pvalue_manual(p_values, label = "signif")+
+  geom_text(data = emm_df, aes(x = code, y = 0, label = round(emmean,1)), size = 3.5)#+
+#facet_wrap(~season)
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/boxplots/t_max_GR_to_SR_spaghetti_lmer_signif.png"), 
+       width=30, height=15, units="cm")
+
+
+#####stats start MT timing####
+qqnorm(as.numeric(res_GR$t_MT_start_rel))
+qqline(as.numeric(res_GR$t_MT_start_rel))
+
+shapiro.test(as.numeric(res_GR$t_MT_start_rel))
+hist(as.numeric(res_GR$t_max_GR_rel), breaks = 15)
+
+m <- lmer(as.numeric(t_MT_start_rel) ~ code + (1 | Date), data=res_GR)
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code) 
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" - .*", "", contrast), 
+         group2 = sub(".* - ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                                                                 ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(res_GR$t_MT_start_rel, na.rm=T)+ 
+                                   row_number() * 70)
+
+
+#####boxplot start MT timing####
+#plot boxplots
+
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(t_MT_start_rel, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(res_GR_jit$code))
+
+
+#calculate sample size
+n_df <- res_GR_jit %>% drop_na(t_MT_start_rel) %>% count(code, name = "n") %>%
+  mutate(label = paste0("n = ", n), y = max(res_GR_jit$t_MT_start_rel, na.rm = TRUE) * 1.05) 
+
+# Plot with point size
+res_GR_jit  %>% drop_na(t_MT_start_rel)  %>% ggplot() +
+  #geom_boxplot(aes(x = code, y = MT_z_start), outlier.shape = NA) +
+  geom_line(aes(x = x_jit,  y = t_MT_start_rel/60, group = Date, color="day"),
+            alpha = 0.5, linewidth = 0.6, na.rm = FALSE) +
+  geom_point(aes(x = x_jit,  y = t_MT_start_rel/60, size = rank_GR, fill=rank_GR),
+             alpha = 0.6, color = "black", shape = 21) +#, fill = "grey70"
+  paletteer::scale_fill_paletteer_d(name = "within day",
+                                    "colorBlindness::LightBlue2DarkBlue7Steps",
+                                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  scale_color_manual(name = expression(atop(bar(m)~"modelled mean" , "n = sample size   ")),
+                     values = c("modelled \nmean" = "black",
+                                "confidence \nlimits" = "black",
+                                "day" = "grey70"),
+                     limits = c( "modelled \nmean", "confidence \nlimits","day"))+
+  scale_size_manual(name = "within day", values = c(1, 2, 3, 4, 5, 6,7),
+                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  guides(fill = guide_legend(reverse=T), 
+         size = guide_legend(reverse=T))+
+  theme_bw(base_size = 14) + ylab("Start of MT (h after SR)")+
+  theme(legend.position = "none", axis.title.x = element_blank(), 
+        text=element_text(size=18), legend.title=element_text(size=14))+
+  scale_x_discrete(labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 10)})+
+  #scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 10))+
+  geom_point(data = emm_df, aes(x = code, y = emmean/60, colour = "modelled \nmean"), size = 4) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL/60, ymax = upper.CL/60, 
+                                   colour = "confidence \nlimits"), width = 0.2, lwd=1)+
+  #stat_pvalue_manual(p_values, label = "signif")+
+  geom_text(data = emm_df, aes(x = code, y = -1, #winter 400 summer 950
+                               label = sprintf("paste(bar(m), ' = ', %s)", round(emmean/60,1))),
+            size = 5, parse =TRUE)+
+  geom_text(data = n_df, aes(x = code, y = y/60, label = label), size = 5)
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/t_start_MT_spaghetti.png"), 
+       width=30, height=15, units="cm")
+
+#####heatmap start MT timing####
+GR_wide <- res_GR %>%
+  #subset(season=="winter")  %>%
+  #subset(windclass=="SW")  %>%
+  select(Date, code, t_MT_start_rel) %>%
+  pivot_wider(names_from = code, values_from = t_MT_start_rel)
+
+GR_wide <- GR_wide[complete.cases(GR_wide),]
+labeladdition <- "CC"
+
+labeladdition <- ""
+labeladdition <- "winter"
+labeladdition <- "SW"
+
+# site names
+sites <- colnames(GR_wide)[-c(1, 10)]  # exclude tod_hms, date, class
+
+# empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                      dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(GR_wide[[i]]) & !is.na(GR_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(GR_wide[[i]][both_present] > GR_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(GR_wide[[i]][both_present] == GR_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurence
+
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+         label = ifelse(!is.na(prop_gt), paste0(round(prop_gt, 1), "\n(n=", n, ")"), ""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+#get half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+#plot half heatmap
+ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 3, vjust = 1.2) +
+  scale_fill_gradient2("Number of days when \nstart of MT is \nlater at Site Y than \nat Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "time of max GR \nat Site Y earlier", 
+                                  "Sites are equal", "time start MT \nat Site Y later", 
+                                  "100%")) +
+  theme_bw() +
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   guide = guide_axis(n.dodge = 2))+ 
+  theme(text = element_text(size=18),
+        legend.key.size=unit(2, "cm"),
+        legend.title=element_text(margin = margin(b=12))
+        #legend.title = element_text(color="white"),
+        #axis.text.y = element_blank(),
+        #axis.ticks.y = element_blank()
+  ) +
+  labs(x = "Site X", y = "Site Y")
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/heatmaps/t_start_MT_", 
+                                        labeladdition, "_binary_percent_half.png"), 
+       width=30, height=15, units="cm")
+
+####stats avg GR ####
+#res_GR$avg_GR[res_GR$avg_GR==0] <- NA
+#res_GR <- subset(res_GR_copy2, season=="summer")
+
+qqnorm(log(res_GR$avg_GR))
+qqline(log(res_GR$avg_GR))
+shapiro.test(log(res_GR$avg_GR))
+hist(log(res_GR$avg_GR), breaks = 20)
+
+m <- lmer(log(avg_GR) ~ code + (1 | Date), data=res_GR)
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code,  type="response")
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" / .*", "", contrast), 
+         group2 = sub(".* / ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                                                                 ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(res_GR$avg_GR, na.rm=T)+ 
+                                   row_number() * 70)
+
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+
+####boxplots avg GR ####
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(avg_GR, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(res_GR_jit$code))
+
+#calculate sample size
+n_df <- res_GR_jit %>% drop_na(avg_GR) %>% count(code, name = "n") %>%
+  mutate(label = paste0("n = ", n), y = max(res_GR_jit$avg_GR, na.rm = TRUE) * 1.05) 
+
+y_brace <- max(res_GR_jit$avg_GR, na.rm = TRUE) * 1.2
+
+# Plot with point size
+res_GR_jit  %>% drop_na(avg_GR)  %>% ggplot() +
+  #geom_boxplot(aes(x = code, y = MT_z_start), outlier.shape = NA) +
+  geom_line(aes(x = x_jit,  y = avg_GR, group = Date, color="day"),
+            alpha = 0.5, linewidth = 0.6, na.rm = FALSE) +
+  geom_point(aes(x = x_jit,  y = avg_GR, size = rank_GR, fill=rank_GR),
+             alpha = 0.6, color = "black", shape = 21) +#, fill = "grey70"
+   #stat_brace(data = data.frame(x = c(1, 3)),  aes(x = x, y = y_brace*10),
+    #inherit.aes = FALSE, bending = 1, outerstart=800, discreteAxis=TRUE) +
+  #stat_bracetext(data = data.frame(x = 2), aes(x = x, y = y_brace+10),#
+    #inherit.aes = FALSE,  label = "Upwind", outerstart=810, 
+    #size=6, fontface="bold", discreteAxis=TRUE) +
+  #stat_brace(data = data.frame(x = c(5, 7)), aes(x = x, y = y_brace),
+          #   inherit.aes = FALSE, bending = 1, outerstart=800, discreteAxis=TRUE) +
+  #stat_bracetext(data = data.frame(x = 6), aes(x = x, y = y_brace+10),#
+          #       inherit.aes = FALSE,  label = "Downwind", outerstart=810, 
+            #     size=6, fontface="bold", discreteAxis=TRUE) +
+  coord_cartesian(y=c(10, 716), clip = "off") +
+  annotate("text", x = Inf, y = Inf, label = "(B)",
+             hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  paletteer::scale_fill_paletteer_d(name = "within day",
+                                    "colorBlindness::LightBlue2DarkBlue7Steps",
+                                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  scale_color_manual(name = expression(atop(bar(m)~"modelled mean" , "n = sample size   ")),
+                     values = c("modelled \nmean" = "black","confidence \nlimits" = "black", "day" = "grey70"),
+                     limits = c( "modelled \nmean", "confidence \nlimits","day"))+
+  scale_size_manual(name = "within day", values = c(1, 2, 3, 4, 5, 6,7),
+                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  guides(fill = guide_legend(reverse=T), 
+         size = guide_legend(reverse=T))+
+  theme_bw(base_size = 14) + ylab(bquote('Average GR '(m~h^-1)))+
+  theme(legend.position = "none", axis.title.x = element_blank(), 
+        text=element_text(size=18), legend.title = element_text(size = 14),
+        plot.margin = unit(c(0.1, 0.01, 0.01, 0.01), units="npc"))+
+  scale_x_discrete(labels = function(x) {
+      new_names <- c("upwind rural" = "rural",
+                     "upwind urban fringe"  = "urban fringe",
+                     "upwind outer city"  = "outer city",
+                     "inner city" = "inner city",
+                     "downwind outer city"  = "outer city",
+                     "downwind urban fringe"  = "urban fringe",
+                     "downwind rural" = "rural")
+      stringr::str_wrap(new_names[x], width = 10)})+
+  #scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 10))+
+  geom_point(data = emm_df, aes(x = code, y = response, colour = "modelled \nmean"), size = 4) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL, ymax = upper.CL, 
+                                   colour = "confidence \nlimits"), width = 0.2, lwd=1)+
+  geom_text(data = emm_df, aes(x = code, y = 0, #winter 400
+                               label = sprintf("paste(bar(m), ' = ', %s)", round(response,0))),
+            size = 5, parse =TRUE)+
+  geom_text(data = n_df, aes(x = code, y = y, label = label), size = 5)
+
+  #geom_text(data = emm_df, aes(x = code, y = 0, label = round(response,0)), size = 5)
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/avg_GR_spaghetti_new.png"), 
+       width=30, height=16.5, units="cm")
+
+####heatmap avg GR ####
+GR_wide <- res_GR %>%
+  #subset(season=="summer")  %>%
+  #subset(windclass=="NE")  %>%
+  select(Date, code, avg_GR) %>%
+  pivot_wider(names_from = code, values_from = avg_GR)
+
+GR_wide <- GR_wide[complete.cases(GR_wide),]
+labeladdition <- "CC"
+
+labeladdition <- ""
+labeladdition <- "summer"
+labeladdition <- "NE"
+
+# site names
+sites <- colnames(GR_wide)[-c(1, 10)]  # exclude tod_hms, date, class
+
+# empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                      dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(GR_wide[[i]]) & !is.na(GR_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(GR_wide[[i]][both_present] > GR_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(GR_wide[[i]][both_present] == GR_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurence
+
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+         label = ifelse(!is.na(prop_gt), paste0(round(prop_gt, 1), "\n(n=", n, ")"), ""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+#get half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+y_brace <- length(levels(factor(norm_df_half$site1)))
+
+#plot half heatmap
+ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(data = subset(norm_df_half, site1 != site2),
+            aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 5, vjust = 1.2) +
+  scale_fill_gradient2("Number of days when \naverage GR is higher at \nSite Y than at Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "average GR at \nSite Y lower", 
+                                  "Sites are equal", "average GR at \nSite Y higher", 
+                                  "100%")) +
+  theme_bw() +
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))),
+                   labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 10)})+
+  scale_y_discrete(labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 5)})+
+  coord_cartesian(clip = "off")+
+  annotate("text", x = Inf, y = Inf, label = "(A)",
+           hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  #scale_y_discrete(labels = function(x) stringr::str_wrap(x, width = 12))+
+  #scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   #guide = guide_axis(n.dodge = 2),
+                   #labels = function(x) stringr::str_wrap(x, width = 10))+ 
+  theme(text = element_text(size=20), 
+        axis.title.y = element_text(angle = 0, vjust=0.5),
+        legend.key.size=unit(2, "cm"), legend.position="none",
+        legend.title=element_text(margin = margin(b=12), size=17),
+        plot.margin = unit(c(0.08, 0.01, 0.01, 0.01), units="npc")) +
+  labs(x = "Site X", y = "Site Y")#+
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/heatmaps/avg_GR", 
+       labeladdition, "_binary_percent_half_new.png"), 
+       width=30, height=16.5, units="cm")
+
+####maxmum MLH according to function####
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+res_GR_jit <- res_GR %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(Date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(MT_z_end, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+# Plot with point size
+ggplot(res_GR_jit, aes(x = code, y = MT_z_end)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_line(aes(x = x_jit, group = Date),
+            color = "grey70", alpha = 0.5, linewidth = 0.6) +
+  geom_point(aes(x = x_jit, size = rank_GR, fill=rank_GR),
+             alpha = 0.85, color = "black", shape = 21) +#, fill = "grey70"
+  scale_size_continuous(name = "Rank \nwithin day",
+                        range = c(2, 6),
+                        guide = guide_legend(reverse = TRUE)) +
+  scale_fill_brewer(name = "Rank \nwithin day", palette="Blues")+
+  scale_size_manual(name = "Rank \nwithin day",
+                    values = c(1, 2, 3, 4, 5, 6,7)) +
+  guides(fill = guide_legend(override.aes = list(size = rev(c(1, 2, 3, 4, 5, 6,7))), reverse=T),
+         size= guide_legend(reverse=TRUE)) +
+  theme_bw(base_size = 14) +ylab("Maximum MLH (m)")+
+  theme(legend.position = "right", axis.title.x = element_blank())+
+  geom_pwc(method = "wilcox.test", label = "p.signif", hide.ns = "p")#+
+  facet_wrap(~season)
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/boxplots/MT_z_end_boxplot_point_rank.png"), 
+       width=30, height=15, units="cm")
+
+####maximum MLH between 14 and 16 ####
+max_MLH_sub <- subset(max_MLH, date %in% dates)
+max_MLH_sub$ID[max_MLH_sub$ID=="BOBI"] <- "CHEM"
+#use ID labels instead of site codes
+#SW
+id_labels_SW <- c("CHAM" = "downwind rural", "ROIS" = "downwind urban fringe", 
+                  "CHEM" = "downwind outer city", "HOTE" =  "inner city",
+                  "MEUD" = "upwind outer city", "SIRT" = "upwind urban fringe", 
+                  "AUNA" = "upwind rural")
+#NE
+id_labels_NE <- c("CHAM" = "upwind rural", "ROIS" = "upwind urban fringe", 
+                  "CHEM" = "upwind outer city", "HOTE" =  "inner city",
+                  "MEUD" = "downwind outer city", "SIRT" = "downwind urban fringe", 
+                  "AUNA" = "downwind rural")
+
+max_MLH_sub <- max_MLH_sub %>% mutate(code = case_when(
+  date %in% cond_SW_few$Date ~ id_labels_SW[ID],
+  date %in% cond_NE_few$Date ~ id_labels_NE[ID],
+  TRUE ~ NA_character_  ))
+
+max_MLH_sub$season <- "winter"
+max_MLH_sub$season[max_MLH_sub$date> as.POSIXct("2023-03-20", tz="UTC") & max_MLH_sub$date < as.POSIXct("2023-09-23", tz="UTC")]<- "summer"
+#check for seasons
+max_MLH_sub <- max_MLH_sub[max_MLH_sub$season=="winter"]
+max_MLH_sub <- max_MLH_sub[max_MLH_sub$season=="summer"]
+
+qqnorm(max_MLH_sub$max_MLH)
+qqline(max_MLH_sub$max_MLH)
+
+shapiro.test(max_MLH_sub$max_MLH)
+hist(max_MLH_sub$max_MLH, breaks = 20)
+
+m <- lmer(max_MLH ~ code + (1 | date), data=max_MLH_sub)
+#bc <- optim.boxcox(formula = max_MLH ~ code, groups=max_MLH_sub$date, data=max_MLH_sub)
+
+anova(m)
+summary(m)
+
+plot(m) # fitted vs resid
+qqnorm(resid(m))
+qqline(resid(m))
+shapiro.test(resid(m))
+
+modelresults <- emmeans(m, pairwise ~ code) 
+emm_df <- as.data.frame(modelresults$emmeans)
+contrasts_df <- as.data.frame(modelresults$contrasts)
+#interpretation: Site A / Site B = 1.25 → Site A tends to have 25% faster growth.
+#plot(emmeans(m, ~ code, type="response"))
+#make df for plotting significance brackets
+p_values <- contrasts_df %>%
+  mutate(group1 = sub(" - .*", "", contrast), 
+         group2 = sub(".* - ", "", contrast), p.adj = p.value) 
+
+pvalue_to_stars <- function(p) {ifelse(p <= 0.001, "***", ifelse(p <= 0.01, "**",
+                                                                 ifelse(p <= 0.05, "*", "ns")))}
+p_values$signif <- pvalue_to_stars(p_values$p.adj)
+p_values  <- p_values[p_values$signif!="ns",] #keep only signif
+p_values  <- p_values %>% mutate(y.position = max(max_MLH_sub$max_MLH, na.rm=T)+ 
+                                   row_number() * 30)
+set.seed(123) #non-random jitter
+# calculate and fix jitter so points and lines align
+max_MLH_jit <- max_MLH_sub %>%
+  mutate(code = factor(code, levels = rev(names(colors)))) %>%
+  group_by(date) %>%
+  mutate(x_jit = as.numeric(code) + runif(n(), -0.15, 0.15),  
+         rank_GR = as.factor(rank(max_MLH, ties.method = "first"))) %>%       
+  #size_rank = scales::rescale(rank_GR, to = c(2, 6))) %>%
+  ungroup()
+
+#reorder factor
+emm_df$code <- factor(emm_df$code, levels=levels(max_MLH_jit$code))
+
+#calculate sample size
+n_df <- max_MLH_jit %>% drop_na(max_MLH) %>% count(code, name = "n") %>%
+  mutate(label = paste0("n = ", n), y = max(max_MLH_jit$max_MLH, na.rm = TRUE) * 1.05) 
+
+# Plot with point size
+max_MLH_jit  %>% drop_na(max_MLH)  %>% ggplot() +
+  #geom_boxplot(aes(x = code, y = MT_z_start), outlier.shape = NA) +
+  geom_line(aes(x = x_jit,  y = max_MLH, group = date, color="day"),
+            alpha = 0.5, linewidth = 0.6, na.rm = FALSE) +
+  geom_point(aes(x = x_jit,  y = max_MLH, size = rank_GR, fill=rank_GR),
+             alpha = 0.6, color = "black", shape = 21) +#, fill = "grey70"
+  paletteer::scale_fill_paletteer_d(name = "within day",
+                                    "colorBlindness::LightBlue2DarkBlue7Steps",
+                                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  scale_color_manual(name = expression(atop(bar(m)~"modelled mean" , "n = sample size   ")),
+                     values = c("modelled \nmean" = "black",
+                                                         "confidence \nlimits" = "black",
+                                                         "day" = "grey70"),
+                     limits = c( "modelled \nmean", "confidence \nlimits","day"))+
+  scale_x_discrete(labels = function(x) {
+    new_names <- c("upwind rural" = "rural",
+                   "upwind urban fringe"  = "urban fringe",
+                   "upwind outer city"  = "outer city",
+                   "inner city" = "inner city",
+                   "downwind outer city"  = "outer city",
+                   "downwind urban fringe"  = "urban fringe",
+                   "downwind rural" = "rural")
+    stringr::str_wrap(new_names[x], width = 10)})+
+  scale_size_manual(name = "within day", values = c(1, 2, 3, 4, 5, 6,7),
+                    labels=c("Smaller", "", "", "", "", "", "Larger")) +
+  guides(fill = guide_legend(reverse=T), 
+         size = guide_legend(reverse=T))+
+  annotate("text", x = Inf, y = Inf, label = "(B)",
+           hjust = 1.2, vjust = 1.2, size = 8, fontface = "bold")+
+  theme_bw(base_size = 14) + ylab("Maximum MLH (m)")+
+  theme(legend.position = "none", axis.title.x = element_blank(), 
+        plot.margin = unit(c(0.1, 0.01, 0.01, 0.01), units="npc"),
+        text=element_text(size=18), legend.title=element_text(size=14))+
+  geom_point(data = emm_df, aes(x = code, y = emmean, colour = "modelled \nmean"), size = 4) +
+  geom_errorbar(data = emm_df, aes(x = code, ymin = lower.CL, ymax = upper.CL, 
+                                   colour = "confidence \nlimits"), width = 0.2, lwd=1)+
+  #stat_pvalue_manual(p_values, label = "signif")+
+  geom_text(data = emm_df, aes(x = code, y = 950, #winter 400 summer 950
+                               label = sprintf("paste(bar(m), ' = ', %s)", round(emmean,0))),
+            size = 5, parse =TRUE)+
+  geom_text(data = n_df, aes(x = code, y = y, label = label), size = 5)
+
+ggsave(path=output_dir, filename=paste0("MLH/GR/mixed_effects_model/MLH_max_summer_spaghetti_new.png"), 
+       width=30, height=16.5, units="cm")
+
+
+
+
+
+228-298
+70/228*100
