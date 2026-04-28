@@ -1,0 +1,2519 @@
+#unload all packages 
+invisible(lapply(paste0("package:", names(sessionInfo()$otherPkgs)),   # Unload add-on packages
+                 detach,
+                 character.only = TRUE, unload = TRUE))
+
+setwd("C:/Users/dana.looschelders/Documents/")
+#### Load functions ####
+source("./alc_toolbox/R/alc_read.R")
+source("./alc_toolbox/R/alc_analyse.R")
+source("./alc_toolbox/R/alc_func.R")
+source("./alc_toolbox/R/alc_process.R")
+source("./alc_toolbox/R/alc_plot.R")
+
+library(colorBlindness)
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+library(collapse)
+library(ggpubr)
+library(patchwork)
+library(clifro)
+library(hms)
+library(dplyr)
+library(png)
+library(ggimage)
+library(cowplot)
+library(grid)
+library(gridExtra) 
+library(ggrepel)
+library(geosphere)
+
+# for summer
+starttime <- as.POSIXct("2023-05-01 00:00:00", tz="UTC")
+endtime <- as.POSIXct("2023-08-31 00:00:00", tz="UTC")
+
+# for year
+starttime <- as.POSIXct("2023-03-01 00:00:00", tz="UTC")
+endtime <- as.POSIXct("2024-03-31 00:00:00", tz="UTC")
+
+source("C:/Users/dana.looschelders/Documents/EC_Berlin/plot_windrose_from_Stackoverflow.r")
+source("~/MLH_heat_fluxes/case_study_days.R")
+dim(cond_NE_few_summer)
+cond_NE_few_summer <- subset(cond_NE_few_summer, Date!=as.Date("2023-05-24") &  Date!=as.Date("2023-06-02"))
+#add the 16th to SW cases
+cond_SW_few <- bind_rows(cond_SW_few, cond[cond$Date==as.Date("2024-01-16"), ])
+cond_SW_few_winter <- bind_rows(cond_SW_few_winter, cond[cond$Date==as.Date("2024-01-16"), ])
+
+source("~/MLH_heat_fluxes/eiffel4windRose.R")
+source("~/MLH_heat_fluxes/solartimes.R")
+
+base_dir  <- "C:/Urbisphere/07_Data/MLH/"
+output_dir <- "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/"
+
+time_res = "15mins_median"
+
+####STRATfinder output - non-QC####
+for(x in c("PAAUNA","PABOBI", "PACHAM", "PAMEUD", "PAROIS")){
+  setwd(paste0(base_dir, "/", x)) #set wd to instrument SN
+  files <- list.files(pattern=".nc", recursive=T) #find files
+  res <- vector(mode='list', length=length(files)) #create output list for MLH
+  for (i in 1:length(files)){
+    if(x=="PABOBI"){height=5}else{height=0}
+  temp_mlh <- alc_read_stratfinder(file=files[i], var="MLH", offset = height)
+  mlh <- alc_aggregate_time_1d(temp_mlh, time_res="15 mins", median=T)
+  res[[i]] <- mlh #write file to list
+  rm(temp_mlh, mlh)
+  }
+  dat <- do.call(rbind, res) #rbind list into df
+  assign(paste0("MLH_", x), dat) #assign name to df
+  rm(dat) #remove temp df, dat_3
+}
+
+
+base_dir  <- "C:/Users/dana.looschelders/bwSyncShare/MLH_qc/output_qc/"
+base_dir  <- "C:/Users/dana.looschelders/bwSyncShare/output_qc_temp/"
+base_dir  <- "C:/Users/dana.looschelders/bwSyncShare/output_qc_v2025.09/"
+base_dir  <- "C:/Users/dana.looschelders/bwSyncShare/output_qc_mixed/"
+#base_dir  <- "C:/Users/dana.looschelders/bwSyncShare/CATRINE_JAN_10_to_20_2023/MLH_raw_data/"
+#base_dir <- "C:/Urbisphere/07_Data/output_qc_temp/output_qc_temp/"
+base_dir <- "C:/Urbisphere/04_Projects/2025_urbanair_Matthias/ALC/"
+setwd(base_dir)
+rm(MLH_PAMEUD)
+test  <- nc_open("PAROIS/ALC/T2920393/raw2l1_set(fr.paris.PAROIS,ALC_T2920393,20230721T000000_20230722T000000)_version(v1.0.2)_L2A_m_v2025d_L2B_v2025d.nc")
+#####STRATfinder qc####
+for(x in c("PAHOTE", "PAAUNA", "PACHAM", "PAMEUD", "PAROIS",  "PABOBI", "PACHEM",  "PASIRT" )){#,  #"PACHEM" , "PAROIS", "PACHEM"
+ # for(x in c("PAMEUD")){ 
+  #for(x in c( "HOTE","SIRT", "AUNA", "CHAM", "MEUD", "ROIS", "CHEM" )){  
+  setwd(paste0(base_dir, "/", x)) #set wd to instrument SN
+  print(x)
+  files <- list.files(pattern=".nc", recursive=T) #find files
+  res <- vector(mode='list', length=length(files)) #create output list for MLH
+  for (i in 1:length(files)){
+    if(x=="PABOBI"){height=3
+    }else if(x=="PAROIS"){height=4
+    }else if(x=="PASIRT"){height=4.5
+    }else if(x=="PACHEM"){height=51
+    }else{height=0}
+    temp_mlh <- alc_read_stratfinder(file=files[i], var="MLH", offset = height)
+    res[[i]]  <- alc_aggregate_time_1d(temp_mlh, time_res="15 mins", median=T)
+  }
+  dat <- do.call(rbind, res) #rbind list into df
+  #dat$time <- round_date(dat$time, unit="min")#round timestamp to nearest minute
+  
+  #dat <- dat[!duplicated(dat$time), ] #remove duplicate timestamps
+  assign(paste0("MLH_", x), dat) #assign name to df
+  rm(dat) #remove temp df
+}
+
+#base_dir  <- "C:/Users/dana.looschelders/bwSyncShare/output_qc_new/"
+output_dir <- "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/STRATfinder_settings_test/"
+output_dir <- "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/"
+output_dir <- "C:/Urbisphere/04_Projects/2025_urbanair_Matthias/"
+setwd(base_dir)
+
+#rm(MLH_PAAUNA, MLH_PABOBI, MLH_PACHAM, MLH_PACHEM, MLH_PAHOTE, MLH_PAMEUD, MLH_PAROIS, MLH_PASIRT)
+#rm(MLH_AUNA, MLH_CHAM, MLH_CHEM, MLH_HOTE, MLH_MEUD, MLH_ROIS, MLH_SIRT)
+rm(all_MLH, MLH_growth, MLH_max, mlh, MLH_subset, all_MLH_sub, 
+   all_MLH_sub_AUNA, MLH_NE_summer, MLH_NE_winter, MLH_summary, MLH_SE_summer,
+   MLH_sub, plot_MLH, mlh_all, mlh_day, MLH_winter, all_MLH_panel)
+rm(MLH, temp_mlh, plot_MLH_Stats)
+#rm(MLH_PABOBI)
+#bind all df together
+all_MLH <- rbindlist(mget(ls(pattern = "MLH_PA")), idcol = TRUE)
+names(all_MLH)[1] <- "ID" #rename ID col
+all_MLH$ID <- substr(all_MLH$ID, start=7, stop=12) #remove mlh from id col
+unique(all_MLH$ID)
+
+#duplicates?
+all_MLH_clean <- all_MLH %>%
+  distinct(ID, time, .keep_all = TRUE)
+all_MLH_clean$ID[all_MLH_clean$ID=="CHEM"] <- "BOBI"
+
+#plot all with cols
+ggplot(all_MLH_clean)+
+  geom_line(aes(x=time, y=MLH))+
+  ggtitle(label="Paris mixed-layer height summer 2023")+
+  #geom_vline(xintercept=as.numeric(all_MLH$time[hour(all_MLH$time)==0&minute(all_MLH$time)==0]))+ #add line for midnight
+  theme_bw()+scale_x_datetime(breaks = scales::breaks_pretty(12), 
+                              limits = c(as.POSIXct("2023-04-01 00:00:00"), 
+                                         as.POSIXct("2023-09-01 00:00:00")))+
+  scale_y_continuous(breaks = scales::breaks_pretty(2), limits=c(0,4000))+
+  ylab(label="MLH (m agl)")+theme(text = element_text(size = 13))+
+  xlab("Time (UTC)")+facet_wrap(~ID, ncol=1, switch = "y")
+
+ggsave(path=output_dir, filename = paste0("/MLH/MLH_ts_summer.png"), 
+       width=25, height=15, units="cm") #save 
+
+#plot all as facet
+ggplot(all_MLH)+
+  geom_point(aes(x=time, y=MLH))+
+  geom_vline(xintercept=as.numeric(all_MLH$time[hour(all_MLH$time)==0&minute(all_MLH$time)==0]))+ #add line for midnight
+  theme_bw()+facet_wrap(~ID, ncol=1)+scale_x_datetime(breaks = scales::breaks_pretty(12))+
+  ylab(label="MLH (m) agl")+theme(text = element_text(size = 20)) 
+ggsave(path=output_dir, filename = paste0("/MLH/MLH_facet_ts_",time_res, ".png"), width=60, height=30, units="cm") #save 
+
+all_MLH$date <- as.Date(all_MLH$time)
+
+all_MLH$type <- NA
+all_MLH$type[all_MLH$ID=="CHAM"|all_MLH$ID=="ROIS"] <- "NE"
+all_MLH$type[all_MLH$ID=="AUNA"|all_MLH$ID=="SIRT"] <- "SW"
+all_MLH$type[all_MLH$ID=="HOTE"|all_MLH$ID=="BOBI"|all_MLH$ID=="MEUD"|all_MLH$ID=="CHEM"] <- "Center"
+
+all_MLH %>% subset(date=="2023-08-20") %>% #ID=="MEUD"&ID=="MEUD"&
+  ggplot(aes(x=time, y=MLH,color=ID))+
+  geom_line()+theme_bw()
+
+#plot case study days
+plotCaseDay  <- function(data=cond, name="cond", label="SW"){
+  for(i in 1:dim(data)[1]){
+    #subset data
+    MLH_sub <- subset(all_MLH, date==data[i,1])
+    if(length(MLH_sub)>0){
+    datename <- as.character(gsub("-", "", substr(data[i,1], start=1, stop=10))) #for filename
+    print(datename)
+    #subset wind data for windrose
+    eiffel_sub <- subset(eiffel, date==data[i,1])
+    #plot windrose
+    wr <- windrose(speed= eiffel_sub$ws, eiffel_sub$wd, ggtheme = "bw")
+    wr <- wr+theme(legend.position="none")
+    #get solar times
+    suntimes_sub <- subset(suntimes, date==data[i,1])
+    #plot sMLH
+    plot_MLH <- ggplot(MLH_sub)+
+      geom_line(aes(x=time, y=MLH, color=type, linetype=ID), na.rm=F)+
+      geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                suntimes_sub$sunrise), tz="UTC"),
+                 color="grey")+
+      geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                suntimes_sub$solarNoon), tz="UTC"),
+                 color="grey", linetype="dashed")+
+      geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                suntimes_sub$sunset), tz="UTC"),
+                 color="grey")+
+      theme_bw()+xlab("Time [UTC]")+ylab("Mixed-layer height [m]")+
+      inset_element(wr, left=-0.1, bottom=0.55, top=0.99, right=0.45)
+    ggsave(plot_MLH, path=output_dir, 
+           filename = paste0("/MLH/case_study_days/", label, "/", datename, "_MLH.png"), 
+           width=25, height=15, units="cm")
+    }else{}
+  }
+}
+
+
+plotCaseDay(cond_NW_few, label="NW")
+plotCaseDay(cond_SE_few, label="SE")
+plotCaseDay(cond_SW_few, label="SW")
+plotCaseDay(cond_NE_few_winter, label="NE")
+
+plotCaseDay()
+
+##plot any  days
+plotAnyDay  <- function(datum="2023-05-01"){
+    #subset data
+    MLH_sub <- subset(all_MLH, date==datum)
+    
+    datename <- as.character(gsub("-", "", datum)) #for filename
+    print(datename)
+    #subset wind data for windrose
+    eiffel_sub <- subset(eiffel, date==datum)
+    #plot windrose
+    wr <- windrose(speed= eiffel_sub$ws, eiffel_sub$wd, ggtheme = "bw")
+    wr <- wr+theme(legend.position="none")
+    #get solar times
+    suntimes_sub <- subset(suntimes, date==datum)
+    #plot sMLH
+    plot_MLH <- ggplot(MLH_sub)+
+      geom_line(aes(x=time, y=MLH, color=ID, linetype=ID), na.rm=F)+
+      geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                suntimes_sub$sunrise), tz="UTC"),
+                 color="grey")+
+      geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                suntimes_sub$solarNoon), tz="UTC"),
+                 color="grey", linetype="dashed")+
+      geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                suntimes_sub$sunset), tz="UTC"),
+                 color="grey")+
+      theme_bw()+xlab("Time [UTC]")+ylab("Mixed-layer height [m]")+
+      inset_element(wr, left=-0.1, bottom=0.55, top=0.99, right=0.45)
+    ggsave(plot_MLH, path=output_dir, 
+           filename = paste0("/MLH/raw_quicklooks_days/", datename, "_MLH.png"), 
+           width=25, height=15, units="cm")
+}
+
+plotAnyDay("2023-10-06")
+plotAnyDay("2023-10-10")
+plotAnyDay("2023-12-16")
+plotAnyDay("2023-11-07")
+plotAnyDay("2024-01-27")
+plotAnyDay("2024-01-11")
+
+for(i in as.character(unique(all_MLH$date))){plotAnyDay(datum=i)}
+
+for(i in as.character(unique(cond_few_winter$Date))){plotAnyDay(datum=i)}
+#check 2014-01-27
+
+
+#plot backscatter as overlap for 7 March for T33
+archive_dir <-  "C:/Urbisphere/07_Data/status-meteo-archive-mount/archive/urbisphere/data/L0/by-source/smurobs/by-location/France/Paris"
+
+####plot MLH with backscatter####
+i="PACHAM"
+i="PAHOTE"
+i="PAAUNA"
+datum=as.Date("2023-06-05")
+datum=as.Date("2023-07-10")
+datum="2024-01-16"
+datum=as.Date("2024-01-11")
+i = "PAMEUD"
+
+#plot from sunset till sunrise T2
+for(datum in substr(cond_NE_few_winter$Date, start=1, stop=10)){
+  print(datum)
+for(i in c( "PACHEM", "PAROIS" )){# "PAAUNA", "PACHAM", "PAMEUD", "PAHOTE",  "PASIRT", 
+  dates <- seq(datum - 1, datum + 1, by = "1 day")
+  datenames <- as.character(gsub("-", "", dates))
+ setwd(paste0(archive_dir, "/", i, "/"))
+ print(i)
+ # Set height by site
+ height <- switch(i,
+                  "PABOBI" = 3,
+                  "PAROIS" = 4,
+                  "PASIRT" = 4.5,
+                  "PACHEM" = 51,
+                  0)
+ 
+ # Initialize containers for 3-day data
+ bsc_all <- data.frame()
+ mlh_all <- data.frame()
+ sunt_all <- data.frame()
+ 
+ for (x in 1:length(datenames)) {
+print(x)
+   files <- list.files(pattern = paste0(datenames[x], "T000000_"), recursive = TRUE)
+   file <- files[grepl("version(v1.0.2)", files, fixed = TRUE)]
+   if (length(file) > 1) file <- file[2]
+   
+   if (length(file) == 1) {
+     bsc <- alc_read_l1(file, var = "rcs_0", offset = height, time_res = "1 min", range_max = 3000)
+     bsc_all <- rbind(bsc_all, bsc)
+     
+     mlh_day <- subset(all_MLH, ID == substr(i, start = 3, stop = 8) & date == as.POSIXct(dates[x]), tz="UTC")
+     mlh_all <- rbind(mlh_all, mlh_day)
+     
+     sunt_day <- subset(site_suntime, ID == i & date == dates[x])
+     sunt_all <- rbind(sunt_all, sunt_day)
+   }
+ }
+ 
+ 
+ #plot
+    p <- ggplot(data=bsc_all, aes(time, as.numeric(range)))+
+      geom_tile(aes(fill=rcs_0))+
+      geom_point(data=mlh_all, aes(x=time, y=MLH, color="MLH"), shape=16)+
+      ylab("Height agl (m)")+ xlab("Time (UTC)")+
+      scale_fill_viridis_c(name= expression(atop("log(" ~beta ~") "  , (m^-1~sr^-1))), 
+                           na.value = "grey", limits = c(1*10^-7, 3*10^-6), #c(10^-8, 1*10^-3)
+                           oob = censor, trans = "log10", n.breaks = 7, direction=-1)+
+      scale_color_manual("", values="black")+
+      geom_vline(data = sunt_all, aes(xintercept = as.POSIXct(paste0(date, " ", sunrise), tz = "UTC")),
+                 color = "grey") +
+      geom_vline(data = sunt_all, aes(xintercept = as.POSIXct(paste0(date, " ", solarNoon), tz = "UTC")),
+                 color = "grey", linetype = "dashed") +
+      geom_vline(data = sunt_all, aes(xintercept = as.POSIXct(paste0(date, " ", sunset), tz = "UTC")),
+                 color = "grey") +
+      theme_bw()+theme(text = element_text(size=20), legend.key.size = unit(1.7, 'cm'),
+                       #axis.title.x=element_blank(),
+                       #axis.text.x=element_blank(),
+                       #legend.position="none",
+                       #axis.ticks.x=element_blank(),
+                       #axis.title.y=element_blank(),
+                       #axis.text.y=element_blank(),
+                       #axis.ticks.y=element_blank()
+                       )+
+      annotate("text", #x = as.POSIXct(paste(max(sunt_all$date), max(sunt_all$sunrise)),tz="UTC")-3600,
+               x=as.POSIXct("2024-01-11 06:30:00", tz="UTC"), 
+               y=950, label="B", fontface=2, size=10)+
+      annotate("text", #x = as.POSIXct(paste(min(sunt_all$date), min(sunt_all$sunset)),tz="UTC")+5500, #+11000
+               x=as.POSIXct("2024-01-11 17:00:00", tz="UTC"), 
+               y=950, label="upwind", fontface=2, size=10)+
+      ylim(0,1000)+
+      scale_x_datetime(breaks=scales::breaks_pretty(9), labels=date_format("%H:%M\n%d-%b"),
+                       limits=c(as.POSIXct("2024-01-11 06:00:00", tz="UTC"), as.POSIXct("2024-01-11 18:00:00", tz="UTC")))
+                                    #limits = c(as.POSIXct(paste(min(sunt_all$date), #from sunset to T+2 sunrise
+                                     #                           min(sunt_all$sunset)),tz="UTC"), 
+                                      #        as.POSIXct(paste(max(sunt_all$date), max(sunt_all$sunrise)),tz="UTC")))
+      
+                      
+    ggsave(p, path= output_dir, filename= "paper_graphs/20240111_CHAM_bsc.png", #paste0("/MLH/case_study_days_mlh_bsc/", 
+                                 #             datum, "_", i, "_Bsc_MLH_low_long.png"), 
+           width=30, height=15, units="cm") #save  #30
+    }
+}
+  datum=as.Date("2024-01-11")
+  datum=as.Date("2024-01-16")
+  datum=as.Date("2024-01-11")
+i = "PACHEM"
+i = "PAAUNA"
+i = "PAMEUD"
+setwd(output_dir)
+datum=as.Date("2023-08-22")
+#for(datum in substr(cond_SW_few_winter$Date, start=1, stop=10)){
+  for(datum in as.Date(c("2023-08-20", "2023-08-21", "2023-08-22"))){
+  print(datum)
+  for(i in c("PAAUNA", "PACHAM" ,"PAMEUD", "PAROIS", "PAHOTE","PACHEM", "PASIRT")){#
+    datename <- as.character(gsub("-", "", datum))
+    setwd(paste0(archive_dir, "/", i, "/"))
+    print(i)
+    files <- list.files(pattern=paste0(datename, "T000000_"), recursive=T)
+    file <- files[grepl("version(v1.0.2)", files, fixed=T)]
+    if(length(file)>1){file <- file[2]}else{}
+    if(i=="PABOBI"){height=3
+    }else if(i=="PAROIS"){height=4
+    }else if(i=="PASIRT"){height=4.5
+    }else if(i=="PACHEM"){height=51
+    }else{height=0}
+    bsc <- alc_read_l1(file, var="rcs_0", offset = height, time_res = "1 min", #15 s
+                       range_max = 3000)
+    mlh <- subset(all_MLH, ID==substr(i, start=3, stop=8)& date==as.Date(datum))
+    sunt <- subset(site_suntime, ID==i & date == datum)
+    #plot
+    p <- ggplot(data=bsc, aes(time, as.numeric(range)))+
+      geom_tile(aes(fill=rcs_0))+
+      geom_point(data=mlh, aes(x=time, y=MLH, color="MLH"))+
+      ylab("Height agl [m]")+ xlab("Time [UTC]")+
+      scale_fill_viridis_c(name= expression(atop("log(" ~beta ~") "  , (m^-1~sr^-1))), 
+                           na.value = "grey", limits = c(10^-7, 10^-5), #option = "mako", 3*10^-6
+                           oob = censor, trans = "log10", n.breaks = 7, direction=-1)+
+      scale_color_manual("", values="red")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunrise), tz="UTC"),
+                 color="grey")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$solarNoon), tz="UTC"),
+                 color="grey", linetype="dashed")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunset), tz="UTC"),
+                 color="grey")+
+      theme_bw()+theme(text = element_text(size=15), legend.key.size = unit(1, 'cm'))+
+      ylim(0,3000)#+
+      #xlim(as.POSIXct("2024-01-11 06:00:00", tz="UTC"), as.POSIXct("2024-01-11 18:00:00", tz="UTC"))
+    
+    ggsave(p, path= output_dir, filename= paste0("/MLH/case_study_days_mlh_bsc/new/", 
+                                                 datum, "_", i, "_Bsc_MLH_low.png"), 
+           width=30, height=15, units="cm") #save 
+    p <- ggplot(data=bsc, aes(time, as.numeric(range)))+
+      geom_tile(aes(fill=rcs_0))+
+      geom_point(data=mlh, aes(x=time, y=MLH, color="MLH"))+
+      ylab("Height agl [m]")+ xlab("Time [UTC]")+
+      scale_fill_viridis_c(name= expression(atop("log(" ~beta ~") "  , (m^-1~sr^-1))), 
+                           na.value = "grey", limits = c(10^-8, 10^-3), #option = "mako", 3*10^-6
+                           oob = censor, trans = "log10", n.breaks = 7, direction=-1)+
+      scale_color_manual("", values="red")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunrise), tz="UTC"),
+                 color="grey")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$solarNoon), tz="UTC"),
+                 color="grey", linetype="dashed")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunset), tz="UTC"),
+                 color="grey")+
+      theme_bw()+theme(text = element_text(size=15), legend.key.size = unit(1, 'cm'))+
+      ylim(0,3000)#+
+    #xlim(as.POSIXct("2023-06-05 18:00:00", tz="UTC"), as.POSIXct("2023-06-05 22:00:00", tz="UTC"))
+    
+   ggsave(p, path= output_dir, filename= paste0("/MLH/case_study_days_mlh_bsc/new/", 
+                                                 datum, "_", i, "_Bsc_MLH_high.png"), 
+          width=30, height=15, units="cm") #save 
+  }
+}
+
+####plot MLH with backscatter difference####
+datum=as.Date("2023-06-05")
+datum=as.Date("2024-01-11")
+datum=as.Date("2024-01-27")
+  # Dates for ±1 day
+dates <- seq(as.Date(datum) - 1, as.Date(datum) + 1, by = "1 day")
+datenames <- gsub("-", "", as.character(dates))
+  
+  # Function to read one site’s data
+  read_site_data <- function(site) {
+    setwd(file.path(archive_dir, site))
+    height <- switch(site,
+                     "PABOBI" = 3,
+                     "PAROIS" = 4,
+                     "PASIRT" = 4.5,
+                     "PACHEM" = 51,
+                     0)
+    bsc_all <- data.frame()
+    for (dn in datenames) {
+      files <- list.files(pattern = paste0(dn, "T000000_"), recursive = TRUE)
+      file <- files[grepl("version(v1.0.2)", files, fixed = TRUE)]
+      if (length(file) > 1) file <- file[2]
+      if (length(file) == 1) {
+        bsc <- alc_read_l1(file, var = "rcs_0", offset = height,
+                           time_res = "1 min", range_max = 3000)
+        bsc$site <- site
+        bsc_all <- bind_rows(bsc_all, bsc)
+      }
+    }
+    return(bsc_all)
+  }
+  
+  # Read both sites
+  bsc_PACHAM <- read_site_data("PACHAM")
+  bsc_PAHOTE <- read_site_data("PAHOTE")
+  
+  # Join by time and range, then compute difference
+  bsc_diff <- inner_join(bsc_PACHAM, bsc_PAHOTE,
+                         by = c("time", "range"),
+                         suffix = c("_PACHAM", "_PAHOTE")) %>%
+    mutate(diff_log_ratio = log10(rcs_0_PAHOTE) - log10(rcs_0_PACHAM))
+  
+  # Get sunrise/sunset for the date 
+  sunt_all <- subset(site_suntime, ID == "PAHOTE" & date %in% dates)
+  
+  #get both MLH
+  mlh_all <- subset(all_MLH, ID %in% c("HOTE", "CHAM") & date %in% dates)
+  
+  #prepare wind data
+  #for 5th June
+  setwd("C:/Urbisphere/07_Data/DWL/paris_dwl_L3V1.39_2023_06_3600s/paris_dwl_L3V1.39_2023_06_3600s/")
+  files <- c(
+    "paris_dwl_L3V1.39_202306040000_202306050000_3600s.nc",
+    "paris_dwl_L3V1.39_202306050000_202306060000_3600s.nc",
+    "paris_dwl_L3V1.39_202306060000_202306070000_3600s.nc")
+  #for 11th Jan
+  setwd("C:/Urbisphere/07_Data/DWL/paris_dwl_L3V1.39_2024_01_3600s/paris_dwl_L3V1.39_2024_01_3600s/")
+  files <- c(
+    "paris_dwl_L3V1.39_202401100000_202401110000_3600s.nc",
+    "paris_dwl_L3V1.39_202401110000_202401120000_3600s.nc",
+    "paris_dwl_L3V1.39_202401120000_202401130000_3600s.nc")
+  DWL_list <- lapply(files, read_DWL_file)
+  DWL <- bind_rows(DWL_list)
+  DWL$altitude  <- as.numeric(DWL$altitude)
+  DWL <- DWL %>% subset( station=="PAJUSS" & 
+                          time >=as.POSIXct("2024-01-11 06:00:00", tz="UTC") & 
+                          time <=as.POSIXct("2024-01-11 18:00:50", tz="UTC") & 
+                          #altitude >300 & altitude < 2300) #June
+                          altitude >300 & altitude < 600) #Jan
+  
+  #average with height
+  DWL_avg <- DWL %>%
+    group_by(time) %>%  
+    summarise(u = mean(sin(wd * pi/180), na.rm = TRUE),  # eastward component
+      v = mean(cos(wd * pi/180), na.rm = TRUE)) %>%   # northward component
+    mutate(wd = (atan2(u, v) * 180/pi) %% 360)
+   
+  dx_min <- 50            # horizontal half-length in minutes (controls angle visibility)
+  # vertical half-length in meters
+  dy_m   <- 180   #June
+  dy_m   <- 90   #Jan
+  
+  wind <- DWL_avg %>%
+    mutate(wd = as.numeric(wd),
+      theta_to = (wd + 180) * pi/180,   # wind FROM -> TO
+      x    = time,
+      #height in plot
+      #y    = 2800,  #June
+      y    = 1000, #Jan
+      xend = time + dminutes(dx_min * sin(theta_to)), # east-west component
+      yend = y    + dy_m * cos(theta_to))  # north-south component
+  
+  #uncertainty
+  bsc_diff$diff_log_ratio[bsc_diff$diff_log_ratio > - 3.5*10^-8 & bsc_diff$diff_log_ratio < 3.5*10^-8] <- NA #4.95
+  
+  bsc_diff$diff_percent <- (10^bsc_diff$diff_log_ratio-1)*100
+  bsc_diff$diff_percent[bsc_diff$diff_percent > - 23.5 & bsc_diff$diff_percent < 23.5] <- NA
+  #squish manually 
+  #bsc_diff$diff_percent[bsc_diff$diff_percent > 216 ] <- 216
+  #bsc_diff$diff_percent[bsc_diff$diff_percent < -68 ] <- -68 
+  range(bsc_diff$diff_percent, na.rm=T)
+  range(bsc_diff$diff_log_ratio, na.rm=T)
+  # Plot difference
+  p <- ggplot(bsc_diff, aes(time, as.numeric(range))) +
+    geom_tile(aes(fill = diff_log_ratio)) + #percent = (10^delta_log10 - 1) * 100
+    ylab("Height agl (m)") + xlab("Time (UTC)") +
+    scale_fill_gradient2(#name=expression(atop("city - upwind", "(%)")),
+      name = expression(atop( "city - upwind", Delta*log[10](beta))),
+                        #limits = c(-200, 200), #percentage
+                         low = "#2686A0", mid = "white", high = "#A36B2B",#mid = "#E6E7C3",
+                          #midpoint = 0, 
+                         limits = c(-0.5, 0.5), 
+                         oob = scales::squish, na.value = "white") + #, trans = "log10"
+    geom_vline(data = sunt_all, aes(xintercept = as.POSIXct(paste0(date, " ", sunrise), tz = "UTC")),
+               color = "grey") +
+    geom_vline(data = sunt_all, aes(xintercept = as.POSIXct(paste0(date, " ", solarNoon), tz = "UTC")),
+               color = "grey", linetype = "dashed") +
+    geom_vline(data = sunt_all, aes(xintercept = as.POSIXct(paste0(date, " ", sunset), tz = "UTC")),
+               color = "grey") +
+    geom_point(data=mlh_all, aes(x=time, y=MLH, shape=ID), size=3)+
+    scale_shape_discrete("MLH (m)", labels=c("upwind", "city"))+
+    geom_segment(data = wind,
+      aes(x = x, y = y, xend = xend, yend = yend),
+      arrow = arrow(type = "closed", length = unit(3, "mm")),
+      linewidth = 0.5 ) +
+    annotate("text", #x = as.POSIXct(paste(max(sunt_all$date), max(sunt_all$sunrise)),tz="UTC")-3600,
+             x=as.POSIXct("2024-01-11 06:00:00", tz="UTC"), 
+             y=1000, label="C", fontface=2, size=10)+
+    #theme_bw() + ylim(0, 3000) + #June
+    theme_bw() + ylim(0, 1000) + #Jan
+    theme(text = element_text(size=18), legend.key.size = unit(1.2, 'cm'))+
+    scale_x_datetime(breaks = scales::breaks_pretty(9),
+                     labels = date_format("%H:%M\n%d-%b"),
+                     limits=c(as.POSIXct( "2024-01-11 06:00:00", tz="UTC"),
+                              as.POSIXct( "2024-01-11 18:00:00", tz="UTC")))
+    scale_x_datetime(breaks = scales::breaks_pretty(9),
+                     labels = date_format("%H:%M\n%d-%b"),
+                     limits = c(as.POSIXct(paste(min(sunt_all$date), min(sunt_all$sunset)), tz="UTC"),
+                                as.POSIXct(paste(max(sunt_all$date), max(sunt_all$sunrise)), tz="UTC")))
+  
+  print(p)
+  ggsave(p, path = output_dir,
+         filename = paste0("/paper_graphs/", datum, "_Diff_Bsc_MLH_wind_uncertainty.png"),
+         width = 30, height = 15, units = "cm")
+
+####plot nocturnal boundary layer####
+  sites <- c("PASIRT","PABOBI", "PAAUNA", "PACHAM", "PAMEUD", "PAHOTE")# 
+  
+  all_bsc <- list()
+  all_mlh <- list()
+  all_sunt <- list()
+  datum=as.Date("2023-06-05")
+  datename <- as.character(gsub("-", "", datum))
+  
+  for(i in sites){
+    setwd(paste0(archive_dir, "/", i, "/"))
+    print(i)
+    
+    files <- list.files(pattern=paste0(datename, "T000000_"), recursive=TRUE)
+    file <- files[grepl("version(v1.0.2)", files, fixed=TRUE)]
+    if(length(file)>1) file <- file[2]
+    
+    if(i=="PABOBI"){height=3
+    }else if(i=="PAROIS"){height=4
+    }else if(i=="PASIRT"){height=4.5
+    }else if(i=="PACHEM"){height=51
+    }else{height=0}
+    
+    # read backscatter
+    bsc <- alc_read_l1(file, var="rcs_0", offset=height, time_res="1 min", range_max=700)
+    bsc$site <- i
+    
+    # MLH
+    mlh <- subset(all_MLH, ID==substr(i, start=3, stop=8) & date==as.Date(datum))
+    mlh$site <- i
+    
+    # suntimes
+    sunt <- subset(site_suntime, ID==i & date==datum)
+    sunt$site <- i
+    
+    all_bsc[[i]] <- bsc
+    all_mlh[[i]] <- mlh
+    all_sunt[[i]] <- sunt
+  }
+  
+  # combine
+  all_bsc <- bind_rows(all_bsc)
+  all_mlh <- bind_rows(all_mlh)
+  all_sunt <- bind_rows(all_sunt)
+  
+  # restrict to 18–22 UTC
+  t_start <- as.POSIXct(paste0(datum, " 18:00:00"), tz="UTC")
+  t_end   <- as.POSIXct(paste0(datum, " 22:00:00"), tz="UTC")
+  all_bsc <- all_bsc %>% filter(time >= t_start & time <= t_end)
+  all_mlh <- all_mlh %>% filter(time >= t_start & time <= t_end)
+  
+  #reorder sites to get factets in order
+  site_order <- c("PACHAM", "PABOBI", "PAHOTE", 
+                  "PAMEUD", "PASIRT", "PAAUNA")
+  all_bsc <- all_bsc %>%
+    mutate(site = factor(site, levels = site_order))
+  levels(all_bsc$site) <- c("upwind rural", "upwind outer city", "inner city", "downwind outer city", "downwind urban fringe", "downwind rural")
+  site_order <-c("upwind rural", "upwind outer city", "inner city", "downwind outer city", "downwind urban fringe", "downwind rural")
+  
+  all_mlh$site <- as.factor(all_mlh$site)
+  levels(all_mlh$site) <- c("downwind rural", "upwind outer city", "upwind rural", "inner city", "downwind outer city", "downwind urban fringe")
+  all_mlh <- all_mlh %>%
+    mutate(site = factor(site, levels = site_order))
+  
+  all_sunt$site <- as.factor(all_sunt$site)   
+  levels(all_sunt$site)  <- c("downwind rural", "upwind outer city", "upwind rural", "inner city", "downwind outer city", "downwind urban fringe")
+  all_sunt <- all_sunt %>%
+    mutate(site = factor(site, levels = site_order))
+  
+  #plot
+  p <- all_bsc %>%
+    mutate(site = factor(site, levels = site_order)) %>%
+  ggplot(aes(time, as.numeric(range))) +
+    geom_tile(aes(fill=rcs_0), height=10, width=60) +
+    geom_point(data=all_mlh, aes(x=time, y=MLH, color="MLH")) +
+    # suntimes as lines per site
+    geom_vline(data=all_sunt, aes(xintercept=as.POSIXct(paste0(date," ",sunrise), tz="UTC")), color="grey") +
+    geom_vline(data=all_sunt, aes(xintercept=as.POSIXct(paste0(date," ",solarNoon), tz="UTC")), 
+               color="grey", linetype="dashed") +
+    geom_vline(data=all_sunt, aes(xintercept=as.POSIXct(paste0(date," ",sunset), tz="UTC")), color="grey") +
+    facet_wrap(~site, ncol=1, scales="fixed", drop = FALSE) +
+    ylab("Height agl (m)") + xlab("Time (UTC)") +
+    facet_wrap(~factor(site, levels= site_order), ncol=1, strip.position="left") +
+    scale_fill_viridis_c(name=expression(atop("log(" ~beta ~") ", (m^-1~sr^-1))), 
+                         na.value="grey", limits=c(5.1e-7, 1.6e-6),
+                         oob=censor, trans="log10", n.breaks=7, direction=-1) +
+    scale_color_manual("", label="STRATfinder \nMLH (m)", values="red") +
+    theme_bw() + ylim(c(0,700))+
+    theme(text = element_text(size=18),
+      legend.key.size = unit(2, 'cm'),
+      strip.text = element_blank(),
+      strip.background = element_blank(),
+      # remove x axis for all facets except bottom
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank())
+  
+  site_labels <- all_bsc %>%
+    group_by(site) %>%
+    summarize(x = min(time), y = 400, .groups="drop")
+  
+  p <- p +geom_label(data=site_labels, aes(x=x, y=y, label=site),
+              inherit.aes=FALSE, hjust=0, vjust=1,
+              size=5, fontface="bold", 
+              colour = c("#332288", "#88CCEE","#88CCEE","#88CCEE","#117733","#117733"),
+              fill="white")
+  
+  #only bottom x axis labels
+  p <- p + theme(axis.text.x = element_text(size=18),
+    axis.ticks.x = element_line())
+  #add arrows for NBl formation times
+  arrow_df <- data.frame(
+    time = as.POSIXct(c("2023-06-05 19:00:00", #CHAM
+                        "2023-06-05 19:55:00", #BOBI
+                        "2023-06-05 20:05:00", #HOTE
+                        "2023-06-05 20:10:00", #MEUD
+                        "2023-06-05 20:30:00", #SIRT
+                        "2023-06-05 21:15:00") #AUNA
+                      , tz="UTC"),
+    y = 0,  # baseline at bottom
+    site = "downwind rural",  # put only the bottom facet site(s) here
+    arrow_color = c("#332288", "#88CCEE","#88CCEE","#88CCEE","#117733","#117733"))
+ 
+    # Data frame for arrows: only for the last site
+  p <- p +
+    geom_segment(data = arrow_df,
+      aes(x = time, xend = time, y = y, yend = y + 120), 
+      arrow = arrow(length = unit(0.3, "cm"), type="closed"), size=2,
+      color = arrow_df$arrow_color, show.legend=F) # set color outside aes
+     
+  # save
+  ggsave(p, path=output_dir,
+         filename=paste0("/paper_graphs/facet_NBL.png"),
+         width=30, height=25, units="cm")
+  
+####plot MLH with depol####
+i="PAROIS"
+datum="2023-06-05"
+datum="2023-12-16"
+datum="2024-01-16"
+datum="2024-01-11"
+#for(datum in substr(cond_NE_few_winter$Date, start=1, stop=10)){
+  print(datum)
+  for(i in c("PACHEM", "PASIRT", "PAROIS", "PACHAM", "PAMEUD", "PAHOTE", "PAAUNA")){
+    datename <- as.character(gsub("-", "", datum))
+    setwd(paste0(archive_dir, "/", i, "/"))
+    print(i)
+    files <- list.files(pattern=paste0(datename, "T000000_"), recursive=T)
+    file <- files[grepl("version(v1.0.2)", files, fixed=T)]
+    if(length(file)>1){file <- file[2]}else{}
+    if(i=="PABOBI"){height=3
+    }else if(i=="PAROIS"){height=4
+    }else if(i=="PASIRT"){height=4.5
+    }else if(i=="PACHEM"){height=51
+    }else{height=0}
+    bsc <- alc_read_l1(file, var="linear_depol_ratio", offset = height, time_res = "1 min", #15 s
+                       range_max = 1500)
+    mlh <- subset(all_MLH, ID==substr(i, start=3, stop=8)& date==as.Date(datum))
+    sunt <- subset(site_suntime, ID==i & date == datum)
+    #plot
+    p <- ggplot(data=bsc, aes(time, as.numeric(range)))+
+      geom_tile(aes(fill=linear_depol_ratio))+
+      geom_point(data=mlh, aes(x=time, y=MLH, color="MLH"))+
+      ylab("Height agl [m]")+ xlab("Time [UTC]")+
+      scale_fill_viridis_c(name= expression(atop(~delta~ "(-)")), 
+                           na.value = "grey", limits = c(0, 0.15), #option = "mako", 3*10^-6
+                           oob = censor, n.breaks = 7, direction=-1,
+                           option = "plasma")+
+      scale_color_manual("", values="red")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunrise), tz="UTC"),
+                 color="grey")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$solarNoon), tz="UTC"),
+                 color="grey", linetype="dashed")+
+      geom_vline(xintercept = as.POSIXct(paste0(sunt$date, " ", 
+                                                sunt$sunset), tz="UTC"),
+                 color="grey")+
+      theme_bw()+theme(text = element_text(size=15), legend.key.size = unit(1, 'cm'))+
+      ylim(0,1500)#+
+    #xlim(as.POSIXct("2023-06-05 18:00:00", tz="UTC"), as.POSIXct("2023-06-05 22:00:00", tz="UTC"))
+    
+    ggsave(p, path= output_dir, filename= paste0("/MLH/case_study_days_mlh_bsc/", 
+                                                 datum, "_", i, "_LDR_MLH_low.png"), 
+           width=30, height=15, units="cm") #save 
+  }
+#}
+
+setwd("C:/Users/dana.looschelders/bwSyncShare/processing_outbox/Intercomparison/T3320613/")
+MLH <- alc_read_stratfinder(file="raw2l1_set(fr.paris.PASIRT,ALC_T3320613,20240309T000000_20240310T000000)_version(v1.0.1)_L2A_180m_v2024d.nc", var="MLH")
+
+#one instrument testplot until 2 km agl
+base_dir <- "C:/Urbisphere/07_Data/status-meteo-sandbox-EMS/"
+x <- "T3320613"
+roof = 0 #ground level
+datum <- "20240309"
+setwd(base_dir)
+files <- list.files(pattern=paste0("*_", x, ",", datum), recursive = T) 
+file <- files[grepl( ".nc", files, fixed = TRUE)]
+#create output list
+backscatter <-  alc_read_l1_NEW(file, range_max = 3000, offset=roof)
+
+ggplot(data=backscatter, aes(time, as.numeric(range)))+
+  geom_tile(aes(fill=rcs_0), width=100)+
+  geom_point(data=MLH, aes(x=time, y=MLH, color="red"))+
+  ylab("Height agl [m]")+
+  xlab("Time [UTC]")+
+  scale_fill_viridis_c(name= expression(atop("log(" ~beta ~") "  , (m^-1~sr^-1))),
+                       option = "mako", na.value = "white", limits = c(10^-8, 5*10^-4),
+                       oob = censor, trans = "log10", n.breaks = 7)+
+  theme_bw()+theme(text = element_text(size=30), legend.key.size = unit(2, 'cm'),
+                   axis.text.x = element_text(angle = 25, vjust = 0.5))+
+  ylim(c(0,2000))
+
+ggsave(path= output_dir, filename= paste0(datum, "_", x, "_Bsc_MLH_until2km_ov180m.png"), width=60, height=30, units="cm") #save 
+
+
+####plot example of T33 with ov threshold of 150 m####
+##get MLH data 
+MLH_T33  <- alc_read_stratfinder(file="C:/Users/dana.looschelders/bwSyncShare/STRATfinder_qc/T3320613/raw2l1_set(fr.paris.PASIRT,ALC_T3320613,20240307T000000_20240308T000000)_version(v1.0.1)_L2A_150m_v2024d_L2B_v2024d.nc", var="MLH") 
+base_dir <- "C:/Urbisphere/07_Data/status-meteo-sandbox-EMS/"
+x <- "T3320613"
+roof = 0 #ground level 
+datum <- "20240307" #weird day
+
+setwd(base_dir)
+files <- list.files(pattern=paste0("*_", x, ",", datum), recursive = T) 
+file <- files[grepl( ".nc", files, fixed = TRUE)]
+#create output list for night 4/5 th March
+backscatter <-  alc_read_l1_NEW(file, range_max = 2000, offset=roof)
+backscatter <-  alc_read_l1(file, range_max = 2000, offset=roof)
+
+p <- ggplot(data=subset(backscatter, range<2000), 
+       aes(time, as.numeric(range)))+
+  geom_tile(aes(fill=rcs_0), width=100, alpha=0.6)+
+  geom_line(data= MLH_T33,
+            aes(x=time, y=MLH,  color="MLH"), lwd=1.5)+
+  ylab("Height (m agl)")+#annotate(geom="label", label="STRATfinder \n ov_threshold \n= 150 m", 
+                          #        x = as.POSIXct("2024-03-07 02:00:00", tz="UTC"),
+                           #       y=1800, size=5, fill="white")+
+  xlab("Time (UTC)")+scale_x_datetime(labels = date_format("%H:%M\n%d-%b"), 
+                                      breaks = pretty_breaks(n=10))+
+  scale_fill_viridis_c(name= expression(atop("log(" ~beta ~") "  , (m^-1~sr^-1))),
+                       na.value = "white", limits = c(10^-8, 10^-3),
+                       trans = "log10", direction=-1,
+                       n.breaks = 7)+
+  scale_color_manual("", values="black")+
+  theme_bw()+theme(text = element_text(size=25),  legend.position="none",
+                   legend.key.size = unit(1, 'cm'))+
+  ylim(c(0,2000))
+
+p_label <- annotate_figure(p, fig.lab = "(a) ", fig.lab.size = 20)
+ggsave(p_label, path= output_dir, filename= paste0(datum, "_", x, "_MLH_150_ov_thres.png"), 
+       width=30, height=15, units="cm") #save 
+
+####plot aggregated MLH over summer####
+#over NE summer
+MLH_NE_summer <- subset(all_MLH, date %in% cond_NE_few_summer$Date)
+MLH_NE_summer$time <- as.POSIXct(MLH_NE_summer$time, tz="UTC")
+MLH_NE_summer$tod_hms <- as_hms(MLH_NE_summer$time)
+
+MLH_NE_summer$ID[MLH_NE_summer$ID=="CHEM"] <- "BOBI"
+
+id_labels <- c("CHAM" = "upwind rural", "ROIS" = "upwind urban fringe", 
+               "BOBI" = "upwind outer city", "HOTE" =  "inner city",
+               "MEUD" = "downwind outer city", "SIRT" = "downwind urban fringe", 
+               "AUNA" = "downwind rural")
+
+MLH_NE_summer <- MLH_NE_summer %>%
+  mutate(ID_label = id_labels[ID])
+
+MLH_SW_summer <- subset(all_MLH, date %in% cond_SW_few_summer$Date)
+MLH_SW_summer$time <- as.POSIXct(MLH_SW_summer$time, tz="UTC")
+MLH_SW_summer$tod_hms <- as_hms(MLH_SW_summer$time)
+
+MLH_SW_summer$ID[MLH_SW_summer$ID=="CHEM"] <- "BOBI"
+
+id_labels <- c("CHAM" = "downwind rural", "ROIS" = "downwind urban fringe", 
+               "BOBI" = "downwind outer city", "HOTE" =  "inner city",
+               "MEUD" = "upwind outer city", "SIRT" = "upwind urban fringe", 
+               "AUNA" = "upwind rural")
+MLH_SW_summer <- MLH_SW_summer %>%
+  mutate(ID_label = id_labels[ID])
+#rbind
+MLH_summer <- rbind(MLH_NE_summer, MLH_SW_summer)
+
+unique(MLH_summer$date)
+#reorder factors
+MLH_summer <- MLH_summer %>%
+  mutate(ID_label = factor(ID_label, 
+                           levels = c("downwind rural", "downwind urban fringe", 
+                                      "downwind outer city",  "inner city", 
+                                      "upwind outer city", "upwind urban fringe", 
+                                      "upwind rural")))
+
+#colors <- c("downwind \nrural" = "#882255","downwind \nurban fringe" = "#882255",
+ #           "downwind \nouter city" = "#88CCEE", "inner city"= "#00008B",
+  #          "upwind \nouter city"= "#88CCEE", "upwind \nurban fringe"= "#E69F00",
+   #         "upwind \nrural" = "#E69F00" )
+
+colors <- c("downwind rural" =  "#ED87D4","downwind urban fringe" = "#882255",
+            "downwind outer city" =  "#879CED", "inner city"= "#00008B",
+            "upwind outer city"= "#70C4C0", "upwind urban fringe"= "#E69F00",
+            "upwind rural" = "#F7E76F")
+
+colors <- c("downwind rural" =  "#332288","downwind urban fringe" = "#332288",
+            "downwind outer city" =  "#88CCEE", "inner city"= "#88CCEE",
+            "upwind outer city"= "#88CCEE", "upwind urban fringe"= "#117733",
+            "upwind rural" = "#117733")
+
+
+MLH_summary <- MLH_summer %>%
+  group_by(ID_label, tod_hms) %>%
+  summarize(
+    median_MLH = median(MLH, na.rm = TRUE),
+    mean_MLH = mean(MLH, na.rm = TRUE),
+    Q1 = quantile(MLH, 0.25, na.rm = TRUE),
+    Q3 = quantile(MLH, 0.75, na.rm = TRUE),
+    N = sum(!is.na(MLH)),
+    .groups = "drop")
+
+zmax <- MLH_summary %>% group_by(ID_label) %>% 
+  summarise(zmax = max(median_MLH))  %>% 
+mutate(ID_label = factor(ID_label, levels = levels(ID_label))) %>%  
+  ggplot(aes(x=ID_label, y=zmax, group=1))+ 
+  geom_line()+
+    geom_point()+
+  theme_bw()+
+  geom_segment(aes(x = 5, xend = 7, y = zmax_df$zmax[5], 
+                   yend = zmax_df$zmax[7]), linetype="dashed") +
+  scale_x_discrete(label = c("downwind", "", "", "", "", "", "upwind"))+
+  #ylab("") + #expression(z[max]~"(m)")
+  theme(axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title  = element_blank(), 
+        text= element_text(size=18))
+
+#between sites
+MLH_summary %>%
+  #subset(tod_hms >= "08:00" & tod_hms <= "20:00") %>% 
+  #subset(N>3) %>% 
+  #na.omit() %>% 
+  ggplot(aes(x = tod_hms, y = MLH, 
+             group = ID_label, color = ID_label)) + #linetype=ID
+  xlab("Time (UTC)")+ ylab("MLH (m agl)")+
+  geom_line(aes(y = median_MLH, size = N), linetype = "solid") +  # fix linetype to "solid"
+  scale_size(range = c(0.3, 2))+
+  #geom_text_repel(data = MLH_summary 
+       #           %>% filter(ID_label == "downwind \nouter city") %>% 
+        #            slice(which.max(median_MLH)),
+           #       aes(x = tod_hms, y = median_MLH, label = "downwind \nouter city"),
+           #       color = "#88CCEE", inherit.aes = FALSE, nudge_y = 20, nudge_x= 15,
+              #    fontface = "bold")+
+ # geom_text_repel(data = MLH_summary 
+             #     %>% filter(ID_label == "upwind \nurban fringe") %>% 
+              #      filter(tod_hms == hms::as_hms("10:45:00")),
+              #   aes(x = tod_hms, y = median_MLH, label = "upwind \nurban fringe"),
+               #   color = "#E69F00", inherit.aes = FALSE, nudge_x = -60, fontface = "bold")+
+  scale_color_manual(values=colors)+
+  scale_x_time(breaks = pretty_breaks(n=4), labels = scales::time_format("%H:%M"))+
+  guides(color = guide_legend(override.aes = list(linewidth = 3), reverse=TRUE, order=1))+
+  theme_bw()+theme(text=element_text(size=16), legend.position = c(0.18, 0.7),
+                   axis.text.x = element_blank(), axis.title.x = element_blank(),
+                   legend.title = element_blank())+
+  annotate("text", label="(A)", x=100*825, y=2000, fontface="bold", size=8)
+  #inset_element(zmax, left=0.05, bottom=0.7, top=0.99, right=0.3)
+
+
+ggsave(path=output_dir, filename="paper_graphs/type_summer_MLH_NObs.png", 
+       width=20, height=15, units="cm")
+#calculate difference
+MLH_summary %>% 
+  subset(tod_hms >= "08:00" & tod_hms <= "19:00") %>% 
+  aggregate(mean_MLH~ID_label, FUN="mean")
+(414.7409+406.7899+356.9412)/3 - 351.5090
+41.315 / 351.5090 *100
+
+
+#####aggregated summer as relative percent #####
+#calculate hourly instantaneous relative differences
+MLH_hourly <- MLH_summer %>%
+  mutate(datetime_hour = floor_date(time, "hour")) %>%
+  group_by(ID_label, datetime_hour) %>%
+  summarise(MLH = median(MLH, na.rm = TRUE), .groups = "drop")
+
+MLH_hourly <- MLH_hourly %>%
+  group_by(datetime_hour) %>%
+  mutate(ref_MLH = MLH[ID_label == "upwind rural"]) %>%
+  ungroup()  %>%
+  mutate(rel_diff = (MLH - ref_MLH) / ref_MLH)  %>%
+  mutate(tod_hms = hour(datetime_hour))
+
+MLH_hourly$date <- date(MLH_hourly$datetime_hour)
+
+ggplot(MLH_hourly, aes(x=tod_hms, rel_diff, color=ID_label))+
+  geom_line()+facet_wrap(~date)+
+  scale_color_manual("", values=colors)+
+  theme_bw()
+
+#aggregate rel diff for time of day 
+X <- 0.5  # minimum fraction of non-NA data required
+
+diurnal_median <- MLH_hourly %>%
+  group_by(ID_label, tod_hms) %>%
+  summarise(
+    n_total = 17, n_valid = sum(!is.na(rel_diff)), frac_valid = n_valid / n_total,
+    median_diff = ifelse(frac_valid >= X, median(rel_diff, na.rm = TRUE), NA_real_),
+    .groups = "drop")
+
+diurnal_median$tod_hms  <-  hms::hms(hours = diurnal_median$tod_hms)
+
+diurnal_median %>% subset(tod_hms>=hms::as.hms("07:00:00")&
+                            tod_hms<= hms::as.hms("20:00:00")&
+                            frac_valid>0.5) %>% 
+  group_by(ID_label) %>% summarise(median(median_diff*100, na.rm=T))
+
+diurnal_median %>% subset(tod_hms>=hms::as.hms("20:00:00")|
+                            tod_hms<= hms::as.hms("07:00:00")&
+                            frac_valid>0.5) %>% 
+  group_by(ID_label) %>% summarise(median(median_diff*100, na.rm=T))
+
+
+#p  <-
+  ggplot(diurnal_median, aes(x = tod_hms, y = median_diff*100, 
+                           color = ID_label, linetype=ID_label))+
+  geom_line(lwd=1.2, show.legend = F)+#
+  ylab(label="rel. diff. to upwind rural site (%)")+xlab("Time of day (UTC)")+
+  scale_x_time(breaks = pretty_breaks(n=4), labels = scales::time_format("%H:%M"))+
+  scale_color_manual(values=colors)+
+  scale_linetype_manual(values=c("solid", "41", "41", "solid", 
+                                 "11", "41", "solid"))+
+  ylim(-40,75)+
+  annotate("text", label="(C)", x=100*825, y=80, fontface="bold", size=8)+
+  theme_bw()+theme(text=element_text(size=16), legend.position = "bottom", 
+                   legend.title = element_blank(), legend.key.width = unit(2, "cm"),
+                   legend.text = element_text(size=20))+
+  guides(color = guide_legend(nrow = 2, override.aes = list(linewidth = 1.5)),
+         linetype = guide_legend(nrow = 2, override.aes = list(linewidth = 1.5)))+
+    annotate("text", label="(C)", x=100*825, y=70, fontface="bold", size=8)
+
+
+#plot.margin = margin(t = 0, r = 10, b = 0, l = 15, unit = "pt")
+
+ggsave(path=output_dir, filename="paper_graphs/hourly_type_summer_MLH_diurnal_rel.png", 
+       width=20, height=10, units="cm")
+
+# Turn into grob and find guide-box grobs
+g <- ggplotGrob(p)
+guide_idx <- which(sapply(g$grobs, function(x) x$name) == "guide-box")
+# Extract the legend grobs
+legend_grobs <- g$grobs[guide_idx]
+# Arrange them in a single row (or change ncol/nrow to taste)
+legend_arranged <- arrangeGrob(grobs = legend_grobs, ncol = length(legend_grobs))
+# Save just the legend as PNG
+ggsave(path=output_dir, filename="paper_graphs/legend.png", plot=legend_arranged,
+       width = 40, height = 4, units="cm", bg = "white")
+
+
+####summer binary comparison of MLH ####
+#transect_stats$ID[transect_stats$ID=="CHEM"] <- "BOBI"
+
+#join with stats to keep only time between morning transition and sunset 
+MLH_sub_summer <- MLH_summer %>%
+  semi_join(res_GR,  by = c("ID"="Site", "date"="Date")) %>%  # keep only case days
+  left_join(res_GR %>% select(Site, Date, MT_start, sunset_time), by = c("ID"="Site", "date"="Date")) %>%
+  filter(time >= MT_start & time <= sunset_time)
+
+#old with transect
+#transect_stats <- transect_stats %>% drop_na(c(t_min, z_min, t_max))
+#MLH_sub_summer <- MLH_summer %>%
+ # semi_join(transect_stats,  by = c("ID", "date")) %>%  # keep only case days
+  #left_join(transect_stats %>% select(ID, date, t1_MT, t1_ET, manual_MT), by = c("ID", "date")) %>%
+  #filter(time >= t1_MT & time <= t1_ET)
+
+
+ggplot(data=MLH_sub_summer)+
+  geom_line(aes(x=tod_hms, y=MLH, color=ID))+
+  facet_wrap(~date, ncol=3)+
+  theme_bw()
+  ggsave(path=output_dir, "MLH_summer_for_binary_composition.png", 
+         width=20, height=10, units="cm")
+
+  #AUNA on 27 May weird - rerun and remove for now
+MLH_sub_summer$MLH[MLH_sub_summer$ID=="AUNA"&MLH_sub_summer$date==as.Date("2023-05-27", tz="UTC")] <- NA
+  
+  #summerise data
+MLH_wide <- MLH_sub_summer %>%
+  group_by(date, tod_hms, ID_label) %>%
+  summarise(MLH = first(MLH), .groups = "drop") %>%
+  pivot_wider(names_from = ID_label, values_from = MLH)
+
+#MLH_wide$class <- "NE"
+#MLH_wide$class[MLH_wide$date %in%c("2023-07-10", "2023-07-11")] <- "SW"
+
+#MLH_wide <- MLH_wide[MLH_wide$class=="NE",]
+# get site names
+sites <- colnames(MLH_wide)[-c(1:2, 10)]  # exclude tod_hms, date, class
+
+# get empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(MLH_wide[[i]]) & !is.na(MLH_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(MLH_wide[[i]][both_present] > MLH_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(MLH_wide[[i]][both_present] == MLH_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurance
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+       label = ifelse(!is.na(prop_gt),
+                      paste0(round(prop_gt, 1), "\n(n=", n, ")"),
+                      ""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+# Plot heatmap
+ggplot(norm_df, aes(x = site1, y = site2, fill = prop_gt)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(prop_gt, 1)), color = "black") +  # optional: show counts
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, fill = "Proportion")
+
+#ggsave(path=output_dir, filename="paper_graphs/type_summer_binary_percent.png", 
+ #      width=25, height=15, units="cm")
+
+#plot half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+#create hjust values to smoothly move axis 
+y_levels <- levels(norm_df_half$site2)
+n_levels <- length(y_levels)
+
+# Create a data frame for custom y-axis labels with staggered x positions
+#y_labels_df <- data.frame(
+ # site2 = y_levels,
+  #x = seq(0, 1, length.out = n_levels))  # staggered x positions
+
+#curve_strength <- -3   # increase for more inward curvature
+#y_labels_df <- data.frame(
+  #site2 = y_levels,
+  #x = -curve_strength * sin(seq(0, pi/2, length.out = n_levels)))
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(data = subset(norm_df_half, site1 != site2),
+            aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 3, vjust = 1.2) +
+  annotate("text", x = 6, y= 7.3, label="(A) Summer", fontface="bold", size=8)+
+  scale_fill_gradient2("Number of times when \nMLH is higher at Site Y\n than at Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "MLH at \nSite Y lower", 
+                                  "Sites are equal", "MLH at \nSite Y higher", 
+                                  "100%")) +
+  theme_bw() +
+  scale_y_discrete(labels = function(x) stringr::str_wrap(x, width = 12))+
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   #guide = guide_axis(n.dodge = 2),
+                   labels = function(x) stringr::str_wrap(x, width = 10))+ 
+  theme(text = element_text(size=20),
+        legend.key.size=unit(2, "cm"), 
+        legend.title=element_text(margin = margin(b=12), size=17)) +
+  labs(x = "Site X", y = "Site Y")#+
+
+
+ggsave(path=output_dir, filename="paper_graphs/summer_binary_percent_half.png", 
+       width=32, height=15, units="cm")
+
+#########plot aggregated MLH over NE winter####
+#id_labels <- c("CHAM" = "NE rural", "ROIS" = "urban fringe", 
+ #              "BOBI" = "outer city", "HOTE" =  "inner city",
+  #             "MEUD" = "outer city", "SIRT" = "urban fringe", 
+   #            "AUNA" = "SW rural")
+#MLH_NE_winter <- MLH_NE_winter %>%
+ # mutate(ID = factor(ID, levels = c("CHAM", "ROIS", "BOBI", "HOTE", "MEUD", "SIRT", "AUNA")))
+
+#colors <- c("CHAM" = "#882255", "ROIS"= "#E69F00" , 
+ #           "BOBI" = "#88CCEE", "HOTE" = "darkblue", 
+  #          "MEUD"= "#88CCEE", "SIRT"= "#E69F00",
+   #         "AUNA" = "#882255")
+
+#try with both directions
+#For SW
+MLH_SW_winter <- subset(all_MLH, date %in% cond_SW_few_winter$Date)
+MLH_SW_winter$time <- as.POSIXct(MLH_SW_winter$time, tz="UTC")
+MLH_SW_winter$tod_hms <- as_hms(MLH_SW_winter$time)
+
+#MLH_SW_winter$tod <- substr(MLH_SW_winter$time, start=12, stop=16)
+
+str(MLH_SW_winter)
+#MLH_SW_winter$ID[MLH_SW_winter$ID=="CHEM"] <- "BOBI"
+
+id_labels <- c("CHAM" = "downwind rural", "ROIS" = "downwind urban fringe", 
+               "BOBI" = "downwind outer city", "CHEM" = "downwind outer city", 
+               "HOTE" =  "inner city", "MEUD" = "upwind outer city", 
+               "SIRT" = "upwind urban fringe", "AUNA" = "upwind rural")
+MLH_SW_winter <- MLH_SW_winter %>%
+  mutate(ID_label = id_labels[ID])
+
+#for NE
+MLH_NE_winter <- subset(all_MLH, date %in% cond_NE_few_winter$Date)
+MLH_NE_winter$time <- as.POSIXct(MLH_NE_winter$time, tz="UTC")
+MLH_NE_winter$tod_hms <- as_hms(MLH_NE_winter$time)
+#MLH_NE_winter$tod <- substr(MLH_NE_winter$time, start=12, stop=16)
+
+str(MLH_NE_winter)
+#MLH_NE_winter$ID[MLH_NE_winter$ID=="CHEM"] <- "BOBI"
+
+MLH_NE_winter <- MLH_NE_winter %>%
+  mutate(ID_label = id_labels[ID])
+#rbind both together
+MLH_winter <- rbind(MLH_NE_winter, MLH_SW_winter)
+
+#reorder factors
+MLH_winter <- MLH_winter %>%
+  mutate(ID_label = factor(ID_label, 
+                           levels = c("downwind rural", "downwind urban fringe", 
+                                      "downwind outer city",  "inner city", 
+                                      "upwind outer city", "upwind urban fringe", 
+                                      "upwind rural")))
+
+unique(MLH_winter$date) #6
+#remove upwind urban fringe for 6th October bc flatling
+
+MLH_winter$MLH[MLH_winter$date=="2023-10-06"&MLH_winter$ID_label=="upwind urban fringe"] <- NA
+
+#colors <- c("downwind \nrural" = "#332288","downwind \nurban fringe" = "#332288",
+#            "downwind \nouter city" = "#88CCEE", "inner city"= "#882255",
+#            "upwind \nouter city"= "#88CCEE", "upwind \nurban fringe"= "#117733",
+#            "upwind \nrural" = "#117733")
+
+
+#colors <- c("downwind \nrural" = "#4A4401","downwind \nurban fringe" = "#4A4401",
+ #           "downwind \nouter city" = "#332288", "inner city"= "#44D8F5",
+ #           "upwind \nouter city"= "#332288", "upwind \nurban fringe"= "#1AAD93",
+ #           "upwind \nrural" = "#1AAD93")
+
+#chosen color scale
+#colors <- c("downwind rural" = "#882255","downwind urban fringe" = "#882255",
+ #           "downwind outer city" = "#88CCEE", "inner city"= "#00008B",
+  #          "upwind outer city"= "#88CCEE", "upwind urban fringe"= "#E69F00",
+   #         "upwind rural" = "#E69F00")
+
+colors <- c("downwind rural" =  "#ED87D4","downwind urban fringe" = "#882255",
+            "downwind outer city" =  "#879CED", "inner city"= "#00008B",
+            "upwind outer city"= "#70C4C0", "upwind urban fringe"= "#E69F00",
+            "upwind rural" = "#F7E76F")
+
+colors <- c("downwind rural" =  "#332288","downwind urban fringe" = "#332288",
+            "downwind outer city" =  "#88CCEE", "inner city"= "#88CCEE",
+            "upwind outer city"= "#88CCEE", "upwind urban fringe"= "#117733",
+            "upwind rural" = "#117733")
+
+#cols <- c("#4477AA", "#EE6677", "#AA3377", "#228833")
+#cols <- c("#332288","#88CCEE","#117733" , "#EE3377", "#5F5F9E" )
+
+#cols <- c("#332288","#44D8F5","#AA3377" , "#57E977" )
+#cols <- c("#332288", "#1AAD93","#4A4401", "#44D8F5" )
+#inner city, fringe, rural, outer city
+
+cols<- c("outer city"    = "#88CCEE",
+  "inner city"  = "#00008B", ##332288
+  "upwind"  = "#E69F00",
+  "downwind"  = "#882255")
+
+#cols <- c("#F7E76F", "#E69F00", "#70C4C0", "#00008B", "#879CED", "#882255", "#ED87D4")
+#displayAllColors(cols)
+
+#reorder ids
+MLH_summary <- MLH_winter %>%
+  group_by(ID_label, tod_hms) %>%
+  summarize(
+    median_MLH = median(MLH, na.rm = TRUE),
+    mean_MLH = mean(MLH, na.rm = TRUE),
+    Q1 = quantile(MLH, 0.25, na.rm = TRUE),
+    Q3 = quantile(MLH, 0.75, na.rm = TRUE),
+    N = sum(!is.na(MLH)),
+    .groups = "drop")
+
+
+###plot only the urban fringe site for all days
+test  <- MLH_winter %>% subset(ID_label=="upwind urban fringe")
+
+ggplot(test, aes(x=tod_hms, y=MLH, color=as.factor(date), group=as.factor(date)))+
+    geom_line()+theme_bw()
+  
+  #between sites
+MLH_summary %>%
+  #subset(tod_hms >= "08:00" & tod_hms <= "20:00") %>% 
+  #subset(N>3) %>% 
+  #na.omit() %>% 
+  ggplot(aes(x = tod_hms, y = MLH, group = ID_label, color = ID_label)) + #linetype=ID
+  xlab("Time (UTC)")+ ylab("MLH (m agl)")+
+  geom_line(aes(y = median_MLH, size = N), linetype = "solid") +  # fix linetype to "solid"
+  scale_size(range = c(0.3, 2))+
+  #geom_text_repel(data = MLH_summary 
+      #            %>% filter(ID_label == "downwind \nrural") %>% 
+     # slice(which.max(median_MLH)),
+    #aes(x = tod_hms, y = median_MLH, label = "downwind \nrural"),
+    #color = "#882255", inherit.aes = FALSE, nudge_y = 20, nudge_x= 15,
+    #fontface = "bold")+
+  #geom_text_repel(data = MLH_summary 
+   #               %>% filter(ID_label == "downwind \nurban fringe") %>% 
+    #                filter(tod_hms == hms::as_hms("18:45:00")),
+    #aes(x = tod_hms, y = median_MLH, label = "downwind \nurban fringe"),
+    #color = "#E69F00", inherit.aes = FALSE, nudge_x = -30, fontface = "bold")+
+  scale_color_manual("", values=colors)+
+  #scale_alpha_manual("", values=c(1, 0.5,1,1,1,0.5, 1))+
+  scale_x_time(breaks = pretty_breaks(n=4), labels = scales::time_format("%H:%M"))+
+  guides(color = guide_legend(override.aes = list(linewidth = 3), reverse=TRUE, order=1))+
+  theme_bw()+theme(text=element_text(size=16), legend.position = c(0.22, 0.82),
+                   axis.text.x = element_blank(), axis.title.x = element_blank(),
+                   legend.title = element_blank(),
+                   #legend.direction = "horizontal",
+                   legend.box = "horizontal")+
+annotate("text", label="(B)", x=100*825, y=950, fontface="bold", size=8)
+  #inset_element(zmax, left=0.05, bottom=0.7, top=0.99, right=0.3)
+
+ggsave(path=output_dir, filename="paper_graphs/type_winter_MLH_NObs.png", 
+       width=20, height=15, units="cm")
+
+
+MLH_summary %>% 
+  subset(tod_hms >= "10:00" & tod_hms <= "17:00") %>% 
+  aggregate(mean_MLH~ID_label, FUN="mean")
+
+(174.9+193.9+237.1)/3 - 143.5
+58.46667/143.5*100 #41
+
+####aggregated winter as relative percent ####
+#calculate relative difference
+MLH_rel_daily <- MLH_winter %>%
+  group_by(date) %>%
+  mutate(ref_median = median(MLH[ID_label == "upwind rural" & 
+                               tod_hms >= as_hms("14:00:00") & 
+                               tod_hms <= as_hms("16:00:00")],
+                         na.rm = TRUE),
+         rel_diff = (MLH - ref_median) / ref_median) %>%
+  ungroup()
+
+#plot relative difference for every day
+ggplot(MLH_rel_daily, aes(x = tod_hms, y = rel_diff*100, 
+                           color = ID_label, group=interaction(date, ID_label)))+
+  geom_line()+theme_bw()
+  
+#aggregate rel diff for time of day 
+diurnal_median <- MLH_rel_daily %>%
+  group_by(ID_label, tod_hms) %>%
+  summarise(median_diff = median(rel_diff, na.rm = TRUE),
+            .groups = "drop")
+#plot
+ggplot(diurnal_median, aes(x = tod_hms, y = median_diff*100, 
+                          color = ID_label))+
+  geom_line()+ylab(label="rel. diff. to upwind rural site (%)")+xlab("Time of day (UTC)")+
+  scale_x_time(breaks = pretty_breaks(n=4), labels = scales::time_format("%H:%M"))+
+  scale_color_manual("", values=colors)+
+  theme_bw()
+
+#ggsave(path=output_dir, filename="paper_graphs/type_winter_MLH_dirunal_rel.png", 
+ #      width=20, height=10, units="cm")
+
+#calculate hourly instantaneous relative differences
+MLH_hourly <- MLH_winter %>%
+  mutate(datetime_hour = floor_date(time, "hour")) %>%
+  group_by(ID_label, datetime_hour) %>%
+  summarise(MLH = median(MLH, na.rm = TRUE), .groups = "drop")
+
+MLH_hourly <- MLH_hourly %>%
+  group_by(datetime_hour) %>%
+  mutate(ref_MLH = MLH[ID_label == "upwind rural"]) %>%
+  ungroup()  %>%
+  mutate(rel_diff = (MLH - ref_MLH) / ref_MLH)  %>%
+  mutate(tod_hms = hour(datetime_hour))
+
+#aggregate rel diff for time of day 
+X <- 0.5  # minimum fraction of non-NA data required
+diurnal_median <- MLH_hourly %>%
+  group_by(ID_label, tod_hms) %>%
+  summarise(
+    n_total = 7, n_valid = sum(!is.na(rel_diff)), frac_valid = n_valid / n_total,
+    median_diff = ifelse(frac_valid >= X, median(rel_diff, na.rm = TRUE), NA_real_),
+    .groups = "drop")
+
+diurnal_median$tod_hms  <-  hms::hms(hours = diurnal_median$tod_hms)
+str(diurnal_median)
+
+diurnal_median %>% subset(tod_hms>=hms::as.hms("09:00:00")&
+                            tod_hms<= hms::as.hms("17:00:00")&
+                            frac_valid>0.5) %>% 
+  group_by(ID_label) %>% summarise(median(median_diff*100, na.rm=T))
+
+diurnal_median %>% subset(tod_hms>=hms::as.hms("20:00:00")|
+                            tod_hms<= hms::as.hms("08:00:00")&
+                            frac_valid>0.5) %>% 
+  group_by(ID_label) %>% summarise(median(median_diff*100, na.rm=T))
+
+
+ggplot(diurnal_median, aes(x = tod_hms, y = median_diff*100, 
+                           color = ID_label, linetype=as.factor(ID_label)))+
+  geom_line(lwd=1.2, show.legend = FALSE)+ #
+  ylab(label="rel. diff. to upwind rural site (%)")+xlab("Time of day (UTC)")+
+  scale_x_time(breaks = pretty_breaks(n=4), labels = scales::time_format("%H:%M"))+
+  scale_color_manual(values=colors)+
+  scale_linetype_manual(values=c("solid", '41', '41', "solid", 
+                                 "11", '41', "solid"))+
+  theme_bw()+theme(text=element_text(size=16), legend.position = "bottom", 
+                   legend.title = element_blank(), legend.key.width = unit(1, "cm"))+
+  ylim(-40,75)+
+  annotate("text", label="(D)", x=100*825, y=70, fontface="bold", size=8)
+
+ggsave(path=output_dir, filename="paper_graphs/hourly_type_winter_MLH_diurnal_rel.png", 
+       width=20, height=10, units="cm")
+
+
+####winter binary comparison####
+
+#join with stats to keep only time between morning transition and evening transition 
+MLH_sub_winter <- MLH_winter %>%
+  semi_join(res_GR,  by = c("ID"="Site", "date"="Date")) %>%  # keep only case days
+  left_join(res_GR %>% select(Site, Date, MT_start, sunset_time), by = c("ID"="Site", "date"="Date")) %>%
+  filter(time >= MT_start & time <= sunset_time)
+
+#MLH_sub_winter <- MLH_winter %>%
+ # semi_join(transect_stats,  by = c("ID", "date")) %>%  # keep only case days
+  #left_join(transect_stats %>% select(ID, date, t1_MT, t1_ET, manual_MT), by = c("ID", "date")) %>%
+  #filter(time >= t1_MT & time <= t1_ET)
+
+ggplot(data=MLH_sub_winter)+
+  geom_line(aes(x=tod_hms, y=MLH, color=ID))+
+  facet_wrap(~date, ncol=3)+
+  theme_bw()
+ggsave(path=output_dir, "MLH_winter_for_binary_composition.png", 
+       width=20, height=10, units="cm")
+
+#winterise data
+MLH_wide <- MLH_sub_winter %>%
+  group_by(date, tod_hms, ID_label) %>%
+  summarise(MLH = first(MLH), .groups = "drop") %>%
+  pivot_wider(names_from = ID_label, values_from = MLH)
+
+MLH_wide$class <- "SW"
+MLH_wide$class[MLH_wide$date %in%c("2024-01-11", "2023-03-03", "2023-03-02")] <- "NE"
+
+MLH_wide <- MLH_wide[MLH_wide$class=="SW",]
+# get site names
+sites <- colnames(MLH_wide)[-c(1:2, 10)]  # exclude tod_hms, date, class
+
+# get empty matrix
+norm_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                      dimnames = list(sites, sites))
+count_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+equal_matrix <- matrix(0, nrow = length(sites), ncol = length(sites),
+                       dimnames = list(sites, sites))
+
+# fill matrix with normalised counts
+for(i in sites){
+  for(j in sites){
+    both_present <- !is.na(MLH_wide[[i]]) & !is.na(MLH_wide[[j]])
+    n <- sum(both_present) #add counts
+    count_matrix[i, j] <- n
+    norm_matrix[i, j] <- sum(MLH_wide[[i]][both_present] > MLH_wide[[j]][both_present]) /
+      sum(both_present)
+    equal_count <- sum(MLH_wide[[i]][both_present] == MLH_wide[[j]][both_present])
+    equal_matrix[i, j] <- equal_count
+  }
+}
+
+equal_matrix #no occurance
+#convert to data frame
+norm_df <- as.data.frame(norm_matrix) %>%
+  rownames_to_column("site1") %>%
+  pivot_longer(-site1, names_to = "site2", values_to = "prop_gt")%>%
+  mutate(n = as.vector(count_matrix),
+         label = ifelse(!is.na(prop_gt),
+                        paste0(round(prop_gt, 1), "\n(n=", n, ")"),""))
+
+#reorder factor levels
+desired_order <- names(colors)
+
+# Reorder the factor in your dataframe (e.g., count_df for the heatmap)
+norm_df <- norm_df %>%
+  mutate(site1 = factor(site1, levels =  names(colors)),
+         site2 = factor(site2, levels =  names(colors)))
+
+
+# Plot heatmap
+ggplot(norm_df, aes(x = site1, y = site2, fill = prop_gt)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(prop_gt, 1)), color = "black") +  # optional: show counts
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, fill = "Proportion")
+
+#ggsave(path=output_dir, filename="paper_graphs/type_winter_binary_percent.png", 
+ #      width=25, height=15, units="cm")
+
+#plot half heatmap
+norm_df_half <- norm_df %>%
+  filter(as.numeric(site1) >= as.numeric(site2))  # lower triangle
+
+norm_df_half <- norm_df_half %>%
+  mutate(prop_gt_rev = ifelse(site1 == site2, 0, 1 - prop_gt))
+
+ggplot(norm_df_half, aes(x = site1, y = site2, fill = prop_gt_rev)) +
+  geom_tile(color = "white", show.legend = TRUE) +
+  geom_tile(data = subset(norm_df_half, site1 == site2),
+            aes(x = site1, y = site2),
+            fill = "#ececec", color = "white", show.legend = FALSE) +
+  geom_text(data = subset(norm_df_half, site1 != site2),
+            aes(label = round(prop_gt_rev*100, 0)),
+            color = "black", size = 5, fontface = "bold", vjust = -0.3) +
+  geom_text(aes(label = paste0("(n=", n, ")")),
+            color = "black", size = 3, vjust = 1.2) +
+  annotate("text", x = 6, y= 7.3, label="(C) Winter", fontface="bold", size=8)+
+  scale_fill_gradient2("Number of times when \nMLH is higher at Site Y\n than at Site X (%)", 
+                       low = "#ef8a62", mid = "white",
+                       high = "#67a9cf", limits=c(0,1), 
+                       midpoint=0.5, na.value = "lightgrey", 
+                       #labels = scales::label_percent(),
+                       labels = c("0%", "MLH at \nSite Y lower", 
+                                  "Sites are equal", "MLH at \nSite Y higher", 
+                                  "100%")) +
+  theme_bw() +
+  scale_y_discrete(labels = function(x) stringr::str_wrap(x, width = 12))+
+  scale_x_discrete(limits = rev(levels(factor(norm_df_half$site1))), 
+                   #guide = guide_axis(n.dodge = 2),
+                   labels = function(x) stringr::str_wrap(x, width = 10))+ 
+  theme(text = element_text(size=20),
+        legend.key.size=unit(2, "cm"), 
+        legend.title=element_text(margin = margin(b=12), size=17)) +
+  labs(x = "Site X", y = "Site Y")#+
+
+ggsave(path=output_dir, filename="paper_graphs/winter_binary_percent_half.png", 
+       width=32, height=15, units="cm")
+
+#between types (SW, city, NE)
+ggplot(MLH_NE_winter, aes(x = as.factor(tod), y = MLH, 
+                          group = type, color = type, linetype=type)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 1000, 
+           label=paste0("N: ", length(cond_NE_few_winter$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  #scale_color_discrete(name="Location")+
+  #scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90)#,
+         #color = guide_legend(title = "Type"),  
+         #fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="paper_graphs/type_NE_winter_MLH_NObs.png", 
+       width=25, height=15, units="cm")
+
+####test when wind dir is NOT along the transect, but perpendicular####
+#over SE summer
+MLH_SE_summer <- subset(all_MLH, date %in% cond_SE_few_summer$Date)
+MLH_SE_summer$time <- format(MLH_SE_summer$time, "%Y-%m-%d %H:%M:%S")
+MLH_SE_summer$tod <- substr(MLH_SE_summer$time, start=12, stop=16)
+
+#merge CHEM and BOBI
+MLH_SE_summer$ID[MLH_SE_summer$ID=="BOBI"] <- "CHEM"
+#remove ROIS (only from 2023-06-26 onwards)??
+MLH_SE_summer <- MLH_SE_summer[MLH_SE_summer$ID!="ROIS",] 
+
+#between sites
+ggplot(MLH_SE_summer, aes(x = as.factor(tod), y = MLH, 
+                          group = ID, color=ID, linetype=ID)) +
+  stat_summary(
+    aes(fill=ID),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.1, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 2000, 
+           label=paste0("N: ", length(cond_SE_few_summer$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=1) +
+  #scale_color_discrete(name="Location")+
+  #scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90),
+         color = guide_legend(title = "ID"),  
+         fill = guide_legend(title = "ID")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_only_SE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#sum data
+MLH_summary <- MLH_SE_summer %>%
+  group_by(ID, tod) %>%
+  summarize(
+    median_MLH = median(MLH, na.rm = TRUE),
+    Q1 = quantile(MLH, 0.25, na.rm = TRUE),
+    Q3 = quantile(MLH, 0.75, na.rm = TRUE),
+    N = sum(!is.na(MLH)),
+    .groups = "drop")
+
+ggplot(MLH_summary, aes(x = as.factor(tod), group = ID, color = ID)) +
+  geom_ribbon(aes(ymin = Q1, ymax = Q3, fill = ID), alpha = 0.1, color = NA) +
+  geom_line(aes(y = median_MLH, size = N), linetype = "solid") +  # fix linetype to "solid"
+  scale_size(range = c(0.5, 2), name = "N Obs.") +
+  xlab("Time [UTC]") + 
+  ylab("MLH [m]") +
+  annotate(geom = "text", x = "22:00", y = 2000, 
+           label = paste0("Total N: ", length(cond_SE_few_summer$Date))) +
+  guides(
+    x = guide_axis(angle = 90),
+    color = guide_legend(title = "ID"),  
+    fill = guide_legend(title = "ID"),
+    size = guide_legend(title = "# Observations")
+  ) +
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_nObs_SE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#between sites and types
+ggplot(MLH_SE_summer, aes(x = as.factor(tod), y = MLH, 
+                          group = ID, color = type, linetype=ID)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 2000, 
+           label=paste0("N: ", length(cond_SE_few_summer$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  scale_color_discrete(name="Location")+
+  scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90),
+         color = guide_legend(title = "Type"),  
+         fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_SE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#between types (SE, city, SE)
+ggplot(MLH_SE_summer, aes(x = as.factor(tod), y = MLH, 
+                          group = type, color = type, linetype=type)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 2000, 
+           label=paste0("N: ", length(cond_SE_few_summer$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  #scale_color_discrete(name="Location")+
+  #scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90)#,
+         #color = guide_legend(title = "Type"),  
+         #fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/type_SE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#########plot aggregated MLH over SE winter###
+MLH_SE_winter <- subset(all_MLH, date %in% cond_SE_few_winter$Date)
+MLH_SE_winter$time <- format(MLH_SE_winter$time, "%Y-%m-%d %H:%M:%S")
+MLH_SE_winter$tod <- substr(MLH_SE_winter$time, start=12, stop=16)
+
+#between sites
+ggplot(MLH_SE_winter, aes(x = as.factor(tod), y = MLH, 
+                          group = ID, color = type, linetype=ID)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 1000, 
+           label=paste0("N: ", length(cond_SE_few_winter$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  scale_color_discrete(name="Location")+
+  scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90),
+         color = guide_legend(title = "Type"),  
+         fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_SE_winter_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#between types (SE, city, NE)
+ggplot(MLH_SE_winter, aes(x = as.factor(tod), y = MLH, 
+                          group = type, color = type, linetype=type)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 1000, 
+           label=paste0("N: ", length(cond_SE_few_winter$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  #scale_color_discrete(name="Location")+
+  #scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90)#,
+         #color = guide_legend(title = "Type"),  
+         #fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/type_SE_winter_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#####pretty plot for talk####
+
+#subset data
+datum <-  as.POSIXct("2023-07-10", tz="UTC")
+stats <- res_20230710
+
+datum <-  as.POSIXct("2023-06-05", tz="UTC")
+stats <- res_20230605
+
+datum <-  as.POSIXct("2023-05-03", tz="UTC")
+
+datum <-  as.POSIXct("2024-01-11", tz="UTC")
+
+
+MLH_sub <- subset(all_MLH, date==datum)
+  datename <- as.character(gsub("-", "", datum)) #for filename
+  #classify layers
+  # Merge relevant columns: ID, t1_MT, t2_MT into dataset1
+  MLH_sub_class <- merge(MLH_sub, stats[, .(ID, t1_MT, t_eve_STRAT)], by = "ID", all.x = TRUE)
+  # Classify each row
+  MLH_sub_class[, layer := fifelse(time >= t1_MT & time < t_eve_STRAT, "ML", "NBL")]
+  #subset wind data for windrose
+  eiffel_sub <- subset(eiffel, date==datum)
+  #plot windrose
+  wr <- windrose(speed= eiffel_sub$ws, eiffel_sub$wd, ggtheme = "bw")
+  wr <- wr+theme(legend.position="none")
+  #get solar times
+  suntimes_sub <- subset(suntimes, date==datum)
+  #plot sMLH
+  plot_MLH <- ggplot(MLH_sub)+
+    geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                              suntimes_sub$sunrise), tz="UTC"),
+               color="grey")+
+    geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                              suntimes_sub$solarNoon), tz="UTC"),
+               color="grey", linetype="dashed")+
+    geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                              suntimes_sub$sunset), tz="UTC"),
+               color="grey")+
+    scale_color_manual(values = c("#88CCEE", "#332288", "#117733" ), 
+                       labels= c("city",  "downwind (NE)", "upwind (SW)"))+
+    scale_linetype_manual(values= c("solid", "solid", "twodash"), #twodash
+                          labels= c("city",  "downwind (NE)", "upwind (SW)"))+
+    theme_bw()+xlab("Time [UTC]")+ylab("Mixed-layer height [m agl]")+
+    scale_x_datetime(date_labels = "%H:%M", 
+                     limits=c(min(MLH_sub_class$time), max(MLH_sub_class$time)))+
+    geom_line(#data=MLH_sub_class %>% filter(layer=="ML"),
+                           data= MLH_sub_class %>% filter(time >= as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                                                    suntimes_sub$sunrise), tz="UTC")&
+                                                            time <=as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                                                                     suntimes_sub$sunset), tz="UTC")),
+                             
+                        aes(x=time, y=MLH, color=type, group=ID, linetype=type), na.rm=F, lwd=1.25)#+
+    #geom_point(data=MLH_sub_class %>% filter(layer == "NBL"),
+     #          aes(x=time, y=MLH, color=type, group=ID), na.rm=F, size=1.25)+
+   # inset_element(wr, left=-0.1, bottom=0.55, top=0.99, right=0.45)
+  
+  ggsave(plot_MLH, path=output_dir, 
+         filename = paste0("/MLH/pretty_plots/", datename, "_MLH_discontinious.png"), 
+         width=25, height=15, units="cm")
+
+  ggplot(eiffel_sub)+
+    geom_point(aes(x=time, y=wd))+
+    theme_bw()+annotate("rect",ymin=191.5, ymax=236.5, 
+                        xmin=as.POSIXct("2023-07-10 00:00:00", tz="UTC"), 
+                        xmax=as.POSIXct("2023-07-11 00:00:00", tz="UTC"), 
+                        fill="red", alpha=0.2) #+ylim(0,360)
+  ggsave(path=output_dir, "wind_dir_effiel_20230710.png", height=10, width=20, units="cm")
+
+  ####panel plot for three days for summer####
+  minimal_windrose <- function(data, wd, binwidth = 30) {
+    ggplot(data, aes(x = {{wd}})) +
+      geom_histogram(binwidth = binwidth, fill = "black", color = "black") +
+      scale_x_continuous(breaks = seq(0, 360, 45),limits = c(0, 360)) +
+      coord_polar(start = 0) +
+      theme_void() +
+      theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank(),
+        panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.8))+
+        annotate("text", x = 0, y = max(ggplot_build(ggplot(data, aes(x = {{wd}})) +
+                                              geom_histogram(binwidth = binwidth))$data[[1]]$count) + 1, 
+        label = "N", fontface = "bold", hjust = 0.5, size=06)
+      }
+  
+  # Define your three days
+  dates_vec <- as.POSIXct(c( "2023-06-05", "2023-07-10", "2023-05-03"), tz = "UTC")
+  
+  # Prepare combined dataset
+  all_MLH_panel <- lapply(dates_vec, function(datum) {
+    
+    MLH_sub <- subset(all_MLH, date == datum)
+    eiffel_sub <- subset(eiffel, date == datum)
+    # Classify layers
+    #MLH_sub_class <- merge(MLH_sub, stats[, .(ID, t1_MT, t_eve_STRAT)], 
+                          # by = "ID", all.x = TRUE)
+    #MLH_sub_class[, layer := fifelse(time >= t1_MT & time < t_eve_STRAT, "ML", "NBL")]
+    # Add solar times
+    suntimes_sub <- subset(suntimes, date == datum)
+    
+    MLH_sub <- MLH_sub %>%
+      mutate(day = as.Date(datum),
+             sunrise = as.POSIXct(paste0(suntimes_sub$date, " ", suntimes_sub$sunrise), tz = "UTC"),
+             sunset = as.POSIXct(paste0(suntimes_sub$date, " ", suntimes_sub$sunset), tz = "UTC"),
+             solarNoon = as.POSIXct(paste0(suntimes_sub$date, " ", suntimes_sub$solarNoon), tz = "UTC"))
+    
+    
+    return(MLH_sub)
+  }) %>% bind_rows()
+  
+  #create labels for panels
+  my_labels <- c(
+    "2023-05-03" = "S3 2023-05-03 across (E)",
+    "2023-06-05" = "S1 2023-06-05 along (NE)",
+    "2023-07-10" = "S2 2023-07-10 along (SW)")
+
+  # Mapping of type to role per date
+  role_map <- tribble(
+    ~day,         ~ID,     ~role,
+    # 3 May special labels
+    "2023-05-03", "CHEM",  "city",
+    "2023-05-03", "HOTE",  "city",
+    "2023-05-03", "MEUD",  "city",
+    "2023-05-03", "CHAM",      "rural",
+    "2023-05-03", "SIRT",      "outer city",
+    "2023-05-03", "AUNA",      "rural",
+    # 5 June (NE downwind, SW upwind)
+    "2023-06-05", "CHEM",  "city",
+    "2023-06-05", "HOTE",  "city",
+    "2023-06-05", "MEUD",  "city",
+    "2023-06-05", "CHAM",      "upwind",
+    "2023-06-05", "SIRT",      "downwind",
+    "2023-06-05", "AUNA",      "downwind",
+    # 10 July (NE upwind, SW downwind)
+    "2023-07-10", "CHEM",  "city",
+    "2023-07-10", "HOTE",  "city",
+    "2023-07-10", "MEUD",  "city",
+    "2023-07-10", "CHAM",      "downwind",
+    "2023-07-10", "ROIS",      "downwind",
+    "2023-07-10", "SIRT",      "upwind",
+    "2023-07-10", "AUNA",      "upwind")
+  
+  # Join into main data
+  all_MLH_panel <- all_MLH_panel %>%
+    mutate(day = as.character(day)) %>%
+    left_join(role_map, by = c("day", "ID"))
+  
+  color_map <- c(
+    "city"    = "#88CCEE",
+    "downwind"  = "#332288",
+    "upwind"    = "#117733",
+    "outer city"  = "#E69F00",
+    "rural"  = "#882255")
+  
+  y_limits <- range(all_MLH_panel$MLH, na.rm = TRUE)
+  
+  plots <- lapply(c("2023-06-05","2023-07-10", "2023-05-03"), function(datum){
+    dat <- all_MLH_panel %>% filter(day == datum)
+    sunrise <- unique(dat$sunrise)
+    sunset <- unique(dat$sunset)
+    solarNoon <- unique(dat$solarNoon)
+ 
+    p <-  ggplot(dat) +
+      geom_vline(xintercept = sunrise, color="grey") +
+      geom_vline(xintercept = solarNoon, color="grey", linetype="dashed") +
+      geom_vline(xintercept = sunset, color="grey") +
+      geom_line(data= dat %>% filter(time >= sunrise & time <= sunset),
+                aes(x=time, y=MLH, color=role, group=ID), linewidth=1.25) +
+      geom_point(data= dat %>% filter(time <= sunrise | time  >= sunset),
+                 aes(x=time, y=MLH, color=role, group=ID)) +
+      scale_color_manual("", values=color_map) +
+      scale_x_datetime(date_labels = "%H:%M", breaks = pretty_breaks(n=4)) +
+      scale_y_continuous(limits = c(0,2500), expand=c(0,0)) +
+      labs(title=my_labels[datum], x="Time (UTC)", y="Mixed-layer height (m agl)") +
+      theme_bw() +
+      theme(legend.position=c(0.2,0.9), text=element_text(size=18), 
+            legend.title=element_blank(), plot.title = element_text(hjust = 0.5))
+ 
+    # Hide y-axis for the 2nd and 3rd plots
+    if(datum != "2023-06-05") {
+      p <- p + theme(axis.title.y = element_blank(),
+                     axis.text.y = element_blank())
+    }
+    #Hide x-axis for the 1nd and 3rd plots
+    if(datum != "2023-07-10") {
+      p <- p + theme(axis.title.x = element_blank())
+    }
+    
+    #add map to 1 plot
+    if(datum == "2023-05-03") {
+      p <- p + geom_image(
+        data = tibble(
+          time = as.POSIXct("2023-05-03 03:30:00", tz = "UTC"), 
+          MLH = 1700,
+          image = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_city_outer_rural_crop_noROIS.png"),
+        aes(x = time, y = MLH, image = image),
+        inherit.aes = FALSE,
+        size = 0.25)
+    }else if(datum == "2023-06-05"){
+      p <- p + geom_image(
+      data = tibble(
+        time = as.POSIXct("2023-06-05 03:30:00", tz = "UTC"), 
+        MLH = 1700,
+        image = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_NE_crop_noROIS.png"),
+      aes(x = time, y = MLH, image = image),
+      inherit.aes = FALSE,
+      size = 0.25)
+    }else{
+      p <- p + geom_image(
+        data = tibble(
+          time = as.POSIXct("2023-07-10 03:30:00", tz = "UTC"), 
+          MLH = 1700,
+          image = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_SW_crop.png"),
+        aes(x = time, y = MLH, image = image),
+        inherit.aes = FALSE,
+        size = 0.25)
+    }
+    
+    p <- p + annotate("text",
+                      x = max(dat$time, na.rm=T) - 500,  # 1 hour before the end
+                      y = 20,  # slightly above bottom
+                      label = LETTERS[which(c("2023-06-05","2023-07-10", "2023-05-03")==datum)],
+                      hjust = 1, vjust = 0, size = 6, fontface = "bold")
+    
+    # Get windrose for this day
+    wr <- windrose_list_summer[[datum]] + 
+      #theme_bw() + 
+      theme(plot.margin = margin(0,0,0,0))
+    
+    # Insert windrose into MLH panel
+    p <- p + inset_element(wr,
+                           left   = 0.7,   # small offset from panel left
+                           right  = 1,   # width of inset
+                           top    = 1.18,   # near top
+                           bottom = 0.60  # height of inset
+    )  
+    
+     })
+  
+  # Combine without collecting legends
+  plot_combined <- plots[[1]] + plots[[2]] + plots[[3]] + plot_layout(ncol=3, guides="keep") 
+  
+  print(plot_combined)
+  ggsave(plot_combined, path=output_dir, 
+         filename = paste0("/paper_graphs/summer_case_study_days_MLH_map_windrose_color.png"), 
+         width=30, height=15, units="cm")
+  
+  ####panel plot for three days for winter####
+  dates_vec <- as.POSIXct(c("2024-01-11", "2024-01-16", "2024-01-27"), tz = "UTC")
+
+  # Prepare combined dataset
+  all_MLH_panel <- lapply(dates_vec, function(datum) {
+    
+    MLH_sub <- subset(all_MLH, date == datum)
+    eiffel_sub <- subset(eiffel, date == datum)
+    # Classify layers
+    #MLH_sub_class <- merge(MLH_sub, stats[, .(ID, t1_MT, t_eve_STRAT)], 
+    # by = "ID", all.x = TRUE)
+    #MLH_sub_class[, layer := fifelse(time >= t1_MT & time < t_eve_STRAT, "ML", "NBL")]
+    # Add solar times
+    suntimes_sub <- subset(suntimes, date == datum)
+    
+    MLH_sub <- MLH_sub %>%
+      mutate(day = as.Date(datum),
+             sunrise = as.POSIXct(paste0(suntimes_sub$date, " ", suntimes_sub$sunrise), tz = "UTC"),
+             sunset = as.POSIXct(paste0(suntimes_sub$date, " ", suntimes_sub$sunset), tz = "UTC"),
+             solarNoon = as.POSIXct(paste0(suntimes_sub$date, " ", suntimes_sub$solarNoon), tz = "UTC"))
+    
+    
+    return(MLH_sub)
+  }) %>% bind_rows()
+  
+  #create labels for panels
+  my_labels <- c(
+    "2024-01-11" = "W1 2024-01-11 along (NE)",
+    "2024-01-16" = "W2 2024-01-16 along (SW)",
+    "2024-01-27" = "W3 2024-01-27 across (SE)")
+  
+  # Mapping of type to role per date
+  role_map <- tribble(
+    ~day,         ~ID,     ~role,
+    # 11 January (NE upwind, SW downwind)
+    "2024-01-11", "CHEM",  "city",
+    "2024-01-11", "HOTE",  "city",
+    "2024-01-11", "MEUD",  "city",
+    "2024-01-11", "SIRT",      "downwind",
+    "2024-01-11", "AUNA",      "downwind",
+    "2024-01-11", "ROIS",      "upwind",
+    "2024-01-11", "CHAM",      "upwind",
+    # 16 January special labels
+    "2024-01-16", "CHEM",  "city",
+    "2024-01-16", "HOTE",  "city",
+    "2024-01-16", "MEUD",  "city",
+    "2024-01-16", "AUNA",      "upwind",
+    "2024-01-16", "SIRT",      "upwind",
+    "2024-01-16", "ROIS",      "downwind",
+    "2024-01-16", "CHAM",      "downwind",
+    # 27 January (city, outer city, rural)
+    "2024-01-27", "CHEM",  "city",
+    "2024-01-27", "HOTE",  "city",
+    "2024-01-27", "MEUD",  "city",
+    "2024-01-27", "SIRT",      "outer city",
+    "2024-01-27", "AUNA",      "rural",
+    "2024-01-27", "ROIS",      "outer city",
+    "2024-01-27", "CHAM",      "rural")
+  
+  # Join into main data
+  all_MLH_panel <- all_MLH_panel %>%
+    mutate(day = as.character(day)) %>%
+    left_join(role_map, by = c("day", "ID"))
+  
+  color_map <- c(
+    "city"    = "#88CCEE",
+    "downwind"  = "#332288",
+    "upwind"    = "#117733",
+    "outer city"  = "#E69F00",
+    "rural"  = "#882255")
+  
+  y_limits <- range(all_MLH_panel$MLH, na.rm = TRUE)
+ 
+  plots <- lapply(c( "2024-01-11", "2024-01-16", "2024-01-27"), function(datum){#"2023-12-16",
+    dat <- all_MLH_panel %>% filter(day == datum)
+    sunrise <- unique(dat$sunrise)
+    sunset <- unique(dat$sunset)
+    solarNoon <- unique(dat$solarNoon)
+    
+    p <-  ggplot(dat) +
+      geom_vline(xintercept = sunrise, color="grey") +
+      geom_vline(xintercept = solarNoon, color="grey", linetype="dashed") +
+      geom_vline(xintercept = sunset, color="grey") +
+      geom_line(data= dat %>% filter(time >= sunrise-3600 & time <= sunset+3600), #filter(time >= sunrise & time <= sunset),
+                aes(x=time, y=MLH, color=role, group=ID), linewidth=1.25) +
+      #geom_line(data= dat %>% filter(time >= sunrise & time <= sunset),
+       #         aes(x=time, y=MLH, color=role, group=ID), linewidth=1.25) +
+      #geom_point(data= dat %>% filter(time <= sunrise | time  >= sunset),
+       #          aes(x=time, y=MLH, color=role, group=ID)) +
+      scale_color_manual("", values=color_map) +
+      scale_x_datetime(date_labels = "%H:%M", breaks = pretty_breaks(n=4)) +
+      scale_y_continuous(limits = c(0,1150), expand=c(0,0)) +
+      labs(title=my_labels[datum],  y="Mixed-layer height (m agl)", x=NULL) +
+      theme_bw() +
+      theme(legend.position=c(0.71,0.12),# 
+            text=element_text(size=18), 
+            legend.background = element_rect(fill = "transparent"),
+            #legend.title=element_blank(), 
+            plot.title = element_text(hjust = 0.5))
+    
+    # Hide y-axis for the 2nd and 3rd plots
+    if(datum != "2024-01-11") {#if(datum != "2023-12-16") {
+      p <- p + theme(axis.title.y = element_blank(),
+                     axis.text.y = element_blank())
+    }
+    #Hide x-axis for the 1nd and 3rd plots
+    if(datum !=  "2024-01-11") {
+      p <- p + theme(axis.title.x = element_blank())
+    }
+    
+    #add map to 1 plot
+    if(datum == "2024-01-27") {
+      p <- p + geom_image(
+        data = tibble(
+          time = as.POSIXct("2024-01-27 08:20:00", tz = "UTC"), #"2023-12-16 03:30:00"
+          MLH = 690,
+          image = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_city_outer_rural_crop.png"),
+        aes(x = time, y = MLH, image = image),
+        inherit.aes = FALSE,
+        size = 0.25)
+    }else if(datum == "2024-01-11"){
+      p <- p + geom_image(
+        data = tibble(
+          time = as.POSIXct("2024-01-11 08:20:00", tz = "UTC"), #03:30:00
+          MLH = 690,
+          image = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_NE_crop.png"),
+        aes(x = time, y = MLH, image = image),
+        inherit.aes = FALSE,
+        size = 0.25)
+    }else{
+      p <- p + geom_image(
+        data = tibble(
+          time = as.POSIXct("2024-01-16 08:20:00", tz = "UTC"), #03:30:00
+          MLH = 690,
+          image = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_SW_crop.png"),
+        aes(x = time, y = MLH, image = image),
+        inherit.aes = FALSE,
+        size = 0.25)
+    }
+    
+    p <- p + annotate("text",
+                      x = max(dat$time, na.rm=T) - 3600*6,  # 1 hour before the end
+                      y = 50,  # slightly above bottom
+                      label = LETTERS[which(c("2024-01-11","2024-01-16", "2024-01-27")==datum)],#"2023-12-16",
+                      hjust = 1, vjust = 0, size = 6, fontface = "bold")
+    
+    # Insert windrose into MLH panel
+    p <- p + inset_element(windrose_list_winter[[datum]],
+      left   = 0,   # small offset from panel left
+      right  = 0.3,   # width of inset
+      top    = 1,   # near top
+      bottom = 0.70  # height of inset
+     )  
+
+    return(p)
+  })
+  
+  plot_combined <- plots[[1]] + plots[[2]] + plots[[3]]  + plot_layout(ncol=3, guides="keep") #+ plots[[3]]
+    
+  print(plot_combined)
+  
+ggsave(plot_combined, path=output_dir, 
+         filename = paste0("/paper_graphs/winter_case_study_days_MLH_map_windrose_SR_to_SS_new.png"), 
+         width=30, height=15, units="cm")
+  
+  
+####plot winter only sr to ss####
+  top_row_plots <- lapply(c( "2024-01-11", "2024-01-16"), function(datum){ #"2023-12-16",
+    # Map
+    map_file <- switch(datum,
+                       #"2023-12-16" = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_SW_crop.png",
+                       "2024-01-11" = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_NE_crop.png",
+                       "2024-01-16" = "C:/Urbisphere/04_Projects/2025_MLH_heat_fluxes/paper_graphs/map_city_outer_rural_crop.png")
+    
+    map_plot <- ggplot() +
+      geom_image(data=tibble(x=0.5, y=0.5, image=map_file),
+                 aes(x=x, y=y, image=image), inherit.aes=FALSE, size=1) +
+      scale_x_continuous(limits=c(0,1)) +
+      scale_y_continuous(limits=c(0,1)) +
+      theme_void()
+    
+    # Windrose
+    wr <- windrose_list[[datum]] +
+      theme_void() +
+      theme(plot.margin = margin(0,0,0,0))
+    
+    # Combine legend + map + windrose horizontally
+    top_row <- plot_grid(map_plot, wr, ncol=2, rel_widths=c(1,1))
+    
+    return(top_row)
+  })
+  
+plots <- lapply(c( "2024-01-11", "2024-01-16"), function(datum){#"2023-12-16",
+    dat <- all_MLH_panel %>% filter(day == datum)
+    sunrise <- unique(dat$sunrise)
+    sunset <- unique(dat$sunset)
+    solarNoon <- unique(dat$solarNoon)
+    
+    p <-  ggplot(dat) +
+      geom_vline(xintercept = sunrise, color="grey") +
+      geom_vline(xintercept = solarNoon, color="grey", linetype="dashed") +
+      geom_vline(xintercept = sunset, color="grey") +
+      geom_line(data= dat %>% filter(time >= sunrise-3600 & time <= sunset+3600), #filter(time >= sunrise & time <= sunset),
+                aes(x=time, y=MLH, color=role, group=ID), linewidth=1.25) +
+      #geom_point(data= dat %>% filter(time <= sunrise | time  >= sunset),
+      #          aes(x=time, y=MLH, color=role, group=ID)) +
+      scale_color_manual("", values=color_map) +
+      scale_x_datetime(date_labels = "%H:%M", breaks = pretty_breaks(n=4)) +
+      scale_y_continuous(limits = c(0,1200), expand=c(0,0)) +
+      labs(title=my_labels[datum], x="Time (UTC)", y="Mixed-layer height (m agl)") +
+      theme_bw() +
+      theme(legend.position = c(0.22,0.94), 
+            legend.background = element_rect(fill = "transparent"),
+            text=element_text(size=18), 
+            #legend.title=element_blank(), 
+            plot.title = element_text(hjust = 0.5),
+            axis.title.x = element_blank())
+    # Hide y-axis for the 2nd and 3rd plots
+    if(datum != "2024-01-11") {#if(datum != "2023-12-16") {
+      p <- p + theme(axis.title.y = element_blank(),
+                     axis.text.y = element_blank())
+    }
+    
+    p <- p + annotate("text",
+                      x = max(dat$sunset, na.rm=T) - 600,  # 1 hour before the end
+                      y = 50,  # slightly above bottom
+                      label = LETTERS[which(c("2024-01-11","2024-01-16")==datum)], #"2023-12-16",
+                      hjust = 1, vjust = 0, size = 6, fontface = "bold")
+    return(p)
+  })
+  
+  # Combine top row with main MLH panels
+  plot_combined <- plot_grid(
+    top_row_plots[[1]], top_row_plots[[2]], #top_row_plots[[3]],
+    plots[[1]], plots[[2]], #plots[[3]],
+    ncol = 2, nrow = 2,rel_widths = c(2.2,2),
+    rel_heights = c(1, 3))+  # top row smaller than main plots
+  draw_label("Time (UTC)",x=0.5, y=  0, vjust=0.8, angle= 0, size=18)
+  
+  print(plot_combined)
+  ggsave(plot_combined, path=output_dir, 
+         filename = paste0("/paper_graphs/winter_case_study_days_MLH_map_windrose_SR_to_SS_two_days.png"), 
+         width=30, height=15, units="cm")
+  
+  ####new try end
+
+
+  
+  ###plot only wind rose####
+  #subset wind data for windrose
+  eiffel_sub <- subset(eiffel, date==as.POSIXct("2023-12-16", tz="UTC"))
+  ggplot(eiffel_sub)+
+    geom_line( aes(x = time, y=wd))+
+    theme_bw()
+  ggsave(path=output_dir, "wind_speed_eiffel_2024-01-11.png", height=10, width=20, units="cm")
+  
+  #plot windrose
+  wr <- windrose(speed= eiffel_sub$ws, eiffel_sub$wd, ggtheme = "bw")
+wr  
+ggsave(path=output_dir, "paper_graphs/wind_dir_eiffel_2023-12-16.png", height=10, width=20, units="cm")
+
+#format time stamps
+MLH_NE_summer$tod <- parse_hm(MLH_NE_summer$tod)
+#get suntimes for that period
+suntimes_NE  <- suntimes[suntimes$date %in% MLH_NE_summer$date,]
+#format time stamps
+suntimes_NE$sunrise <- parse_hm(suntimes_NE$sunrise)
+suntimes_NE$sunset <- parse_hm(suntimes_NE$sunset)
+#clean data to only include times with all groups present
+MLH_NE_summer_complete <- MLH_NE_summer %>%
+  group_by(date, tod) %>%
+  filter(setequal(unique(MLH_NE_summer$ID), ID[!is.na(MLH)])) %>%#
+  ungroup()
+#summerise data
+#sum data 
+MLH_summary <- MLH_NE_summer_complete %>%
+  group_by(tod) %>%
+  summarize(
+    N = n_distinct(date)/14,
+    .groups = "drop")
+
+MLH_NE_summer_complete_N <- MLH_NE_summer_complete %>%
+  left_join(MLH_summary, by = "tod")
+
+#MLH_NE_summer_complete_N$MLH[MLH_NE_summer_complete_N$N < 0.5] <- NA
+MLH_NE_summer_complete_N_summary <- MLH_NE_summer_complete_N %>%
+  filter(tod >= parse_hm("03:49"),
+         tod <= parse_hm("19:45")) %>%
+  group_by(tod, type, ID) %>%
+  summarise(
+    mean_MLH = mean(MLH, na.rm = TRUE),
+    mean_N = mean(N, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(mean_MLH = ifelse(mean_N < 0.5, NA, mean_MLH))
+
+##aggreated plot
+ggplot(MLH_NE_summer_complete_N_summary, aes(x = tod, y = mean_MLH, 
+                          color=type, group = ID)) +
+  geom_rect(data = NULL, inherit.aes = FALSE,
+            aes(xmin = min(suntimes_NE$sunrise), xmax = max(suntimes_NE$sunrise),
+                ymin = 0, ymax = Inf),
+            fill = "lightgrey", alpha = 0.3) +
+  geom_rect(data = NULL, inherit.aes = FALSE,
+            aes(xmin = min(suntimes_NE$sunset), xmax = max(suntimes_NE$sunset),
+                ymin = 0, ymax = Inf),
+            fill = "lightgrey", alpha = 0.3) +
+  #stat_summary(aes(color=type),  # Grouping needed for stat_summary
+   # fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+  #  fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+  #  geom = "errorbar",  alpha = 0.5 ) +
+ # stat_summary(data=MLH_NE_summer_complete_N %>% filter(tod <= parse_hm("19:45")&
+  #                                                        tod >= parse_hm("03:49")&
+   #                                                       N >= 0.5),
+    #           geom = "line", fun = "mean", aes(linewidth=ifelse(N < 0.5, NA, N)), na.rm=T) + #
+  #stat_summary(data=MLH_NE_summer_complete_N %>% filter(tod > parse_hm("19:45")),
+   #            geom = "point", fun = "mean", aes(size=N)) + #
+  geom_line(aes(linewidth = mean_N)) +
+  scale_color_manual("", values = c("#88CCEE", "#332288", "#117733" ), 
+                     labels= c("city",  "upwind (NE)", "downwind (SW)"))+
+  scale_fill_manual("", values = c("#88CCEE", "#332288", "#117733" ), 
+                     labels= c("city",  "upwind (NE)", "downwind (SW)"))+
+  theme_bw()+xlab("Time of day [UTC]")+ylab("Mixed-layer height [m agl]")+
+  scale_x_time(labels = scales::time_format("%H:%M"),
+               limits = c(hms::parse_hms("03:40:00"), hms::parse_hms("20:00:00"))) +
+  theme_bw()+theme(text=element_text(size=18))+
+  scale_linewidth_continuous(name = "Fraction of # days", 
+                             breaks = c(0.5, 0.75, 1.0),
+                             range = c(0.2, 1.8))+
+  guides(color = guide_legend(override.aes = list(linewidth = 2.5)) )
+  #scale_size_continuous(name = "Fraction of days", range = c(1, 3)) 
+
+ggsave(path=output_dir, 
+       filename="MLH/pretty_plots/NE_summer_MLH_mean_Nobs_SS_to_SR.png", 
+       width=25, height=15, units="cm")
+
+
+#plot MLH above sea level
+height_asl  <- data.frame("ID" = c("AUNA","BOBI", "HOTE", "CHAM", "MEUD", "SIRT"), 
+                          "height_asl"=c(156, 53, 33, 72, 93, 155))
+MLH_NE_summer_asl <- MLH_NE_summer %>% left_join(height_asl, by = "ID")
+
+#Calculate MLH above sea level 
+MLH_NE_summer_asl <- MLH_NE_summer_asl %>%  mutate(MLH_asl = MLH + height_asl)
+
+
+#MLH_NE_summer_complete_N$MLH[MLH_NE_summer_complete_N$N < 0.5] <- NA
+MLH_NE_summer_asl_summary <- MLH_NE_summer_asl %>%
+  #filter(tod >= parse_hm("03:49"),
+   #      tod <= parse_hm("19:45")) %>%
+  group_by(tod, type, ID) %>%
+  summarise(
+    mean_MLH_asl = mean(MLH_asl, na.rm = TRUE),
+    mean_MLH = mean(MLH, na.rm = TRUE)) 
+
+##aggreated plot
+
+ggplot(MLH_NE_summer_asl_summary, aes(x = parse_hm(tod), y = mean_MLH_asl, 
+                                             color=type, group = ID)) +
+  geom_rect(data = NULL, inherit.aes = FALSE,
+            aes(xmin = min(suntimes_NE$sunrise), xmax = max(suntimes_NE$sunrise),
+                ymin = 0, ymax = Inf),
+            fill = "lightgrey", alpha = 0.3) +
+  geom_rect(data = NULL, inherit.aes = FALSE,
+            aes(xmin = min(suntimes_NE$sunset), xmax = max(suntimes_NE$sunset),
+                ymin = 0, ymax = Inf),
+            fill = "lightgrey", alpha = 0.3) +
+  geom_line(linewidth=1.25)+
+  scale_color_manual("", values = c("#88CCEE", "#332288", "#117733" ), 
+                     labels= c("city",  "upwind (NE)", "downwind (SW)"))+
+  theme_bw()+xlab("Time of day [UTC]")+ylab("Mixed-layer height [m asl]")+
+  scale_x_time(labels = scales::time_format("%H:%M"),
+               limits = c(hms::parse_hms("03:40:00"), hms::parse_hms("20:00:00"))) +
+  theme_bw()+theme(text=element_text(size=18))+
+  guides(color = guide_legend(override.aes = list(linewidth = 2.5)) )
+#scale_size_continuous(name = "Fraction of days", range = c(1, 3)) 
+
+ggsave(path=output_dir, 
+       filename="MLH/pretty_plots/NE_summer_MLH_asl_mean_SS_to_SR.png", 
+       width=25, height=15, units="cm")
+
+##wind rose for aggregated plot
+eiffel_sub <- subset(eiffel, date %in% unique(MLH_NE_summer$date))
+windrose(speed= eiffel_sub$ws, eiffel_sub$wd, ggtheme = "bw", n_speeds = 3) #, legend_title = "2024-01-16"
+ggsave(path=output_dir, "MLH/pretty_plots/NE_summer_wind_eiffel.png", height=10, width=20, units="cm")
+
+###plot MLH for modelling CATRINE####
+MLH_winter <- subset(all_MLH, date>=as.Date("2024-01-10")& date<=as.Date("2024-01-20"))
+
+#plot all with cols
+ggplot(MLH_winter)+
+  geom_point(aes(x=time, y=MLH, color=ID))+
+  geom_vline(xintercept=as.numeric(all_MLH$time[hour(all_MLH$time)==0&minute(all_MLH$time)==0]))+ #add line for midnight
+  theme_bw()+scale_x_datetime(breaks = scales::breaks_pretty(12))+
+  ylab(label="MLH [m] agl")+theme(text = element_text(size = 20)) 
+ggsave(path=output_dir, filename = paste0("/CATRINE_JAN/MLH_January_color_ts_", time_res, ".png"), width=60, height=30, units="cm") #save 
+
+#plot all as facet
+ggplot(MLH_winter)+
+  geom_point(aes(x=time, y=MLH))+
+  geom_vline(xintercept=as.numeric(all_MLH$time[hour(all_MLH$time)==0&minute(all_MLH$time)==0]))+ #add line for midnight
+  theme_bw()+facet_wrap(~ID, ncol=1)+scale_x_datetime(breaks = scales::breaks_pretty(12))+
+  ylab(label="MLH (m) agl")+theme(text = element_text(size = 20)) 
+ggsave(path=output_dir, filename = paste0("/CATRINE_JAN/MLH_facet_ts_",time_res, ".png"), width=60, height=30, units="cm") #save 
+
+for(datum in unique(MLH_winter$date)){
+  print(datum)
+  MLH_sub <- subset(MLH_winter, date==as.Date(datum))
+  datename <- as.character(gsub("-", "", as.Date(datum))) #for filename
+  #subset wind data for windrose
+  eiffel_sub <- subset(eiffel, date==datum)
+  #plot windrose
+  wr <- windrose(speed= eiffel_sub$ws, eiffel_sub$wd, ggtheme = "bw")
+  wr <- wr+theme(legend.position="none")
+  #get solar times
+  suntimes_sub <- subset(suntimes, date==datum)
+  #plot sMLH
+  plot_MLH <- ggplot(MLH_sub)+
+    geom_line(aes(x=time, y=MLH, color=ID, group=ID), na.rm=F)+
+    geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                              suntimes_sub$sunrise), tz="UTC"),
+               color="grey")+
+    geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                              suntimes_sub$solarNoon), tz="UTC"),
+               color="grey", linetype="dashed")+
+    geom_vline(xintercept = as.POSIXct(paste0(suntimes_sub$date, " ", 
+                                              suntimes_sub$sunset), tz="UTC"),
+               color="grey")+
+    scale_color_manual(values = c("#88CCEE", "#332288", "#117733" ), 
+                       labels= c("city",  "NE", "SW"))+
+    theme_bw()+xlab("Time [UTC]")+ylab("Mixed-layer height [m]")+
+    scale_x_datetime(date_labels = "%H:%M")+
+    inset_element(wr, left=-0.1, bottom=0.55, top=0.99, right=0.45)
+  ggsave(plot_MLH, path=output_dir, 
+         filename = paste0("/CATRINE_JAN/", datename, "_MLH_site.png"), 
+         width=25, height=15, units="cm")
+  
+  
+}
+
+
+####archive####
+#between sites
+ggplot(MLH_NE_summer, aes(x = as.factor(tod), y = MLH, 
+                          color=type, group = ID)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.1, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 2000, 
+           label=paste0("N: ", length(cond_NE_few_summer$Date)))+
+  stat_summary( geom = "point", fun = "median", linewidth=1) +
+  #scale_color_manual(values = c("#1b9e77", "#7570b3", "#d95f02"), 
+  #                  labels= c("city",   "upwind (NE)","downwind (SW)"))+
+  #scale_fill_manual(values = c("#1b9e77", "#7570b3", "#d95f02"), 
+  #                  labels= c("city",  "upwind (NE)","downwind (SW)"))+
+  #scale_color_discrete(name="Location")+
+  #scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90),
+         color = guide_legend(title = "ID"),  
+         fill = guide_legend(title = "ID")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_only_NE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+
+#sum data
+MLH_summary <- MLH_NE_summer %>%
+  group_by(ID, tod) %>%
+  summarize(
+    median_MLH = median(MLH, na.rm = TRUE),
+    Q1 = quantile(MLH, 0.25, na.rm = TRUE),
+    Q3 = quantile(MLH, 0.75, na.rm = TRUE),
+    N = sum(!is.na(MLH)),
+    .groups = "drop")
+
+ggplot(MLH_summary, aes(x = as.factor(tod), group = ID, color = ID)) +
+  geom_ribbon(aes(ymin = Q1, ymax = Q3, fill = ID), alpha = 0.1, color = NA) +
+  geom_line(aes(y = median_MLH, size = N), linetype = "solid") +  # fix linetype to "solid"
+  scale_size(range = c(0.5, 2), name = "N Obs.") +
+  xlab("Time [UTC]") + 
+  ylab("MLH [m]") +
+  annotate(geom = "text", x = "22:00", y = 2000, 
+           label = paste0("Total N: ", length(cond_NE_few_summer$Date))) +
+  guides(
+    x = guide_axis(angle = 90),
+    color = guide_legend(title = "ID"),  
+    fill = guide_legend(title = "ID"),
+    size = guide_legend(title = "# Observations")
+  ) +
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_nObs_NE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#between sites and types
+ggplot(MLH_NE_summer, aes(x = as.factor(tod), y = MLH, 
+                          group = ID, color = type, linetype=ID)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 2000, 
+           label=paste0("N: ", length(cond_NE_few_summer$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  scale_color_discrete(name="Location")+
+  scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90),
+         color = guide_legend(title = "Type"),  
+         fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/ID_NE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
+
+#between types (SW, city, NE)
+ggplot(MLH_NE_summer, aes(x = as.factor(tod), y = MLH, 
+                          group = type, color = type, linetype=type)) +
+  stat_summary(
+    aes(fill=type),  # Grouping needed for stat_summary
+    fun.min = function(x) quantile(x, 0.25, na.rm = TRUE),  
+    fun.max = function(x) quantile(x, 0.75, na.rm = TRUE),  
+    geom = "ribbon",  alpha = 0.2, color=NA  ) +
+  xlab("Time [UTC]")+ ylab("MLH [m]")+
+  annotate(geom="text", x= "22:00", y= 2000, 
+           label=paste0("N: ", length(cond_NE_few_summer$Date)))+
+  stat_summary( geom = "line", fun = "median", linewidth=0.8) +
+  #scale_color_discrete(name="Location")+
+  #scale_fill_discrete(name="Location")+
+  guides(x =  guide_axis(angle = 90)#,
+         #color = guide_legend(title = "Type"),  
+         #fill = guide_legend(title = "Type")#,
+         #linetype = guide_legend(title = "ID", override.aes = list(color = id_colors))
+  )+
+  theme_bw()
+ggsave(path=output_dir, filename="MLH/aggregated/type_NE_summer_MLH_median_IQR_shading.png", 
+       width=25, height=15, units="cm")
